@@ -897,7 +897,7 @@ function eventBody(t,date){
   return { summary:(t.done?'✓ ':'')+t.text,
     start:{dateTime:`${date}T${t.time}:00`, timeZone:TZ},
     end:{dateTime:`${date}T${end}:00`, timeZone:TZ},
-    extendedProperties:{private:{trackId:t.id}} };
+    extendedProperties:{private:{trackId:t.id, trackApp:'1'}} };
 }
 function gtaskBody(t,date){ return { title:t.text||'(untitled)', due:`${date}T00:00:00.000Z`, status:t.done?'completed':'needsAction' }; }
 const JSONH={'Content-Type':'application/json'};
@@ -905,25 +905,24 @@ async function gCreate(type,t,date){
   const url=type==='event'?CAL_URL:TASKS_URL;
   const body=type==='event'?eventBody(t,date):gtaskBody(t,date);
   const r=await gApi(url,{method:'POST',headers:JSONH,body:JSON.stringify(body)});
-  if(!r.ok) throw new Error(type+' create '+r.status); return (await r.json()).id;
+  if(!r.ok) throw new Error(type+' create '+r.status); return r.json();
 }
 async function gUpdate(type,gid,t,date){
   const url=(type==='event'?CAL_URL:TASKS_URL)+'/'+encodeURIComponent(gid);
   const body=type==='event'?eventBody(t,date):gtaskBody(t,date);
   const r=await gApi(url,{method:'PATCH',headers:JSONH,body:JSON.stringify(body)});
-  if(!r.ok && r.status!==404) throw new Error(type+' update '+r.status);
   if(r.status===404) return gCreate(type,t,date);   // recreate if it was deleted in Google
-  return gid;
+  if(!r.ok) throw new Error(type+' update '+r.status); return r.json();
 }
 async function gDelete(type,gid){
   const url=(type==='event'?CAL_URL:TASKS_URL)+'/'+encodeURIComponent(gid);
   const r=await gApi(url,{method:'DELETE'}); /* 404/410 fine */ return r;
 }
 
-let gPushT=null, gApplying=false, gReauthWarned=false;
+let gPushT=null, gApplying=false, gSyncing=false, gReauthWarned=false;
 function gReauthToast(){ if(gReauthWarned) return; gReauthWarned=true; toast('Google session expired — tap 📅 to reconnect'); }
 function gPushSchedule(){
-  if(!gConfigured() || gApplying) return;
+  if(!gConfigured() || gApplying || gSyncing) return;
   if(!gConnected() && localStorage.getItem('tk_gconnected')!=='1') return;
   clearTimeout(gPushT); gPushT=setTimeout(gPush, 1500);
 }
@@ -943,13 +942,13 @@ async function gPush(){
       const hash=taskHash(t,date); const wantE=wantEvent(t), wantT=wantTask(t);
       // Calendar-event channel
       if(wantE){
-        if(!t.gcalId){ t.gcalId=await gCreate('event',t,date); changed=true; }
-        else if(t.gHash!==hash){ t.gcalId=await gUpdate('event',t.gcalId,t,date); changed=true; }
+        if(!t.gcalId){ const res=await gCreate('event',t,date); t.gcalId=res.id; t.gcalPushedAt=stamp(res); t.gMarked=true; changed=true; }
+        else if(t.gHash!==hash || !t.gMarked){ const res=await gUpdate('event',t.gcalId,t,date); t.gcalId=res.id; t.gcalPushedAt=stamp(res); t.gMarked=true; changed=true; }  // !gMarked backfills the trackApp marker on old events
       } else if(t.gcalId){ await gDelete('event',t.gcalId); t.gcalId=null; changed=true; }
       // Google-Tasks channel
       if(wantT){
-        if(!t.gtaskId){ t.gtaskId=await gCreate('task',t,date); t.gNotesClean=true; changed=true; }
-        else if(t.gHash!==hash){ t.gtaskId=await gUpdate('task',t.gtaskId,t,date); changed=true; }
+        if(!t.gtaskId){ const res=await gCreate('task',t,date); t.gtaskId=res.id; t.gtaskPushedAt=stamp(res); t.gNotesClean=true; changed=true; }
+        else if(t.gHash!==hash){ const res=await gUpdate('task',t.gtaskId,t,date); t.gtaskId=res.id; t.gtaskPushedAt=stamp(res); changed=true; }
         if(t.gtaskId && !t.gNotesClean){ try{ await gApi(TASKS_URL+'/'+encodeURIComponent(t.gtaskId),{method:'PATCH',headers:JSONH,body:JSON.stringify({notes:''})}); }catch(e){} t.gNotesClean=true; changed=true; }   // one-time: strip old [track:] tag
       } else if(t.gtaskId){ await gDelete('task',t.gtaskId); t.gtaskId=null; changed=true; }
       t.gHash=hash;
@@ -968,11 +967,82 @@ async function gPush(){
   finally{ gApplying=false; if(b) b.classList.remove('syncing'); }
 }
 
+/* ---- Phase 3: pull Google changes back into the tracker (two-way) ---- */
+function stamp(res){ return (res && res.updated ? Date.parse(res.updated) : 0) || Date.now(); }
+function bucketOf(t){ for(const k in tasks){ if((tasks[k]||[]).indexOf(t)>=0) return k; } return null; }
+function removeLocal(t){ const k=bucketOf(t); if(k){ tasks[k]=tasks[k].filter(x=>x!==t); if(!tasks[k].length) delete tasks[k]; } }
+function moveLocal(t,nd){ const k=bucketOf(t); if(k===nd) return; if(k){ tasks[k]=tasks[k].filter(x=>x!==t); if(!tasks[k].length) delete tasks[k]; } (tasks[nd]=tasks[nd]||[]).push(t); }
+function localDirty(t){ return t.gHash !== taskHash(t, bucketOf(t)); }   // edited locally since last sync
+function applyEvent(t,ev){
+  const s=new Date(ev.start.dateTime||ev.start.date);
+  const e=(ev.end&&(ev.end.dateTime||ev.end.date))?new Date(ev.end.dateTime||ev.end.date):null;
+  const nd=key(s);
+  t.time=pad(s.getHours())+':'+pad(s.getMinutes());
+  if(e) t.end=pad(e.getHours())+':'+pad(e.getMinutes());
+  const sum=ev.summary||''; t.done=/^✓\s/.test(sum); t.text=sum.replace(/^✓\s/,'');
+  moveLocal(t,nd); t.gcalPushedAt=stamp(ev); t.gHash=taskHash(t,nd);
+}
+function applyGTask(t,gt){
+  if(gt.title!=null) t.text=gt.title;
+  t.done = gt.status==='completed';
+  const nd = gt.due ? gt.due.slice(0,10) : bucketOf(t);
+  if(nd) moveLocal(t,nd);
+  t.gtaskPushedAt=stamp(gt); t.gHash=taskHash(t,bucketOf(t));
+}
+function importGTask(gt){
+  const nd = gt.due ? gt.due.slice(0,10) : key(today);
+  const t={ id:uid(), text:gt.title||'(untitled)', done:gt.status==='completed', prio:0, time:'', end:'', gtaskId:gt.id, gNotesClean:true };
+  t.gtaskPushedAt=stamp(gt); t.gHash=taskHash(t,nd);
+  (tasks[nd]=tasks[nd]||[]).push(t);
+}
+async function gPull(){
+  const since = localStorage.getItem('tk_gpull');
+  const nowISO = new Date().toISOString();
+  const byCal={}, byTask={};
+  for(const k in tasks) (tasks[k]||[]).forEach(t=>{ if(t.gcalId)byCal[t.gcalId]=t; if(t.gtaskId)byTask[t.gtaskId]=t; });
+  let changed=false;
+  // Calendar — only our own events (trackApp marker), including deletions
+  try{
+    let u=CAL_URL+'?privateExtendedProperty='+encodeURIComponent('trackApp=1')+'&showDeleted=true&singleEvents=true&maxResults=2500';
+    if(since) u+='&updatedMin='+encodeURIComponent(since);
+    const data=await (await gApi(u)).json();
+    (data.items||[]).forEach(ev=>{
+      const t=byCal[ev.id]; if(!t) return;
+      if(ev.status==='cancelled'){ removeLocal(t); changed=true; return; }   // deleted in Google
+      if(!localDirty(t) && stamp(ev) > (t.gcalPushedAt||0)){ applyEvent(t,ev); changed=true; }  // local wins on conflict
+    });
+  }catch(e){ console.warn('[gPull cal]',e); }
+  // Google Tasks — edits/completions/deletions; import new ones created in Google
+  try{
+    let u=TASKS_URL+'?showDeleted=true&showHidden=true&maxResults=100';
+    if(since) u+='&updatedMin='+encodeURIComponent(since);
+    const data=await (await gApi(u)).json();
+    (data.items||[]).forEach(gt=>{
+      const t=byTask[gt.id];
+      if(t){
+        if(gt.deleted){ removeLocal(t); changed=true; return; }
+        if(!localDirty(t) && stamp(gt) > (t.gtaskPushedAt||0)){ applyGTask(t,gt); changed=true; }
+      } else if(!gt.deleted){ importGTask(gt); changed=true; }
+    });
+  }catch(e){ console.warn('[gPull tasks]',e); }
+  localStorage.setItem('tk_gpull', nowISO);
+  if(changed){ DB.save('tk_tasks',tasks); cloudPush(); rerenderAll(); }
+  return changed;
+}
+async function gSync(){
+  if(!gConfigured() || !gConnected() || gSyncing || gApplying) return;
+  gSyncing=true; const b=document.getElementById('gBtn'); if(b) b.classList.add('syncing');
+  try{ await gPull(); }catch(e){ console.error('[gSync]',e); }
+  gSyncing=false; if(b) b.classList.remove('syncing');
+  gPush();   // push local-only changes and cascade deletions out to Google
+}
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) gSync(); });
+
 function gConnect(silent){
   gGetToken(!silent).then(async ()=>{
     localStorage.setItem('tk_gconnected','1'); gReauthWarned=false; updateGBtn();
     if(!silent){ try{ toast(await gVerify()); }catch(e){ console.error(e); toast('Connected, but API check failed'); } }
-    gPushSchedule();   // sync existing tasks up to Google
+    gSync();   // two-way: pull remote changes, then push local ones
   }).catch(err=>{ console.warn('[Google] connect failed', err); if(!silent) toast('Google connect canceled'); updateGBtn(); });
 }
 
@@ -993,6 +1063,8 @@ document.getElementById('todayLabel').textContent = `${DOW[today.getDay()]}, ${M
 renderTaskDow(); setTaskView('month'); setTab('tasks');
 initCloud();
 gInitWhenReady();
+setTimeout(()=>gSync(), 1500);                                   // pull anything changed in Google while away
+setInterval(()=>{ if(!document.hidden) gSync(); }, 60000);      // light two-way poll while the app is open
 </script>
 </body>
 </html>
