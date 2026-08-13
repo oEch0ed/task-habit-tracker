@@ -144,7 +144,7 @@
   .weekday .wh .wd{font-weight:700;}
   .weekday .wh .wnum{color:var(--muted); font-size:13px;}
   .weekday .wh.today .wd{color:var(--accent);}
-  .taskline{display:flex; align-items:center; gap:10px; padding:9px 12px; border-top:1px solid var(--line);}
+  .taskline{display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:9px 12px; border-top:1px solid var(--line);}
   .taskline .tc{width:22px; height:22px; border-radius:7px; border:2px solid var(--line); flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-size:13px; color:transparent; cursor:pointer;}
   .taskline .tc.on{background:var(--good); border-color:var(--good); color:#052e13; animation:pop .25s;}
   .taskline .pf{width:6px; align-self:stretch; border-radius:3px; background:transparent; flex:0 0 auto; cursor:pointer;}
@@ -169,6 +169,9 @@
   .mtime,.rowtime{background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:9px; padding:8px; font-size:14px; outline:none; flex:0 0 auto; -webkit-appearance:none; min-width:0;}
   .rowtime{padding:5px 6px; font-size:12px; color:var(--muted);}
   .rowtime:focus,.mtime:focus{border-color:var(--accent); color:var(--text);}
+  .trow{display:flex; align-items:center; gap:8px; margin:2px 0 4px;}
+  .tdash{color:var(--muted); font-weight:600;}
+  .rowtimes{display:flex; align-items:center; gap:4px; margin-left:auto;}
   .pchips{display:flex; gap:8px; margin:6px 0 2px;}
   .pchip{flex:1; text-align:center; padding:8px; border-radius:10px; border:1px solid var(--line); font-size:12px; font-weight:600; cursor:pointer; color:var(--muted);}
   .pchip.sel{color:#fff;}
@@ -358,6 +361,7 @@ function sortTasks(list){
   }).map(x=>x[0]);
 }
 function fmtTime(t){ if(!t) return ''; const [h,m]=t.split(':').map(Number); const ap=h<12?'AM':'PM'; return `${((h+11)%12)+1}:${String(m).padStart(2,'0')} ${ap}`; }
+function fmtRange(a,b){ if(a&&b) return `${fmtTime(a)} – ${fmtTime(b)}`; if(a) return fmtTime(a); if(b) return `until ${fmtTime(b)}`; return ''; }
 let tMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let weekStart = startOfWeek(today);
 let hMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -405,7 +409,7 @@ function renderMonthGrid(){
     const SHOW=4;
     let inner=`<div class="cn">${d.getDate()}</div>`;
     if(list.length){ inner=`<span class="cnt">${list.filter(t=>!t.done).length||'✓'}</span>`+inner; }
-    inner += list.slice(0,SHOW).map(t=>`<div class="mini p${t.prio||0} ${t.done?'done':''}">${t.done?'✓ ':''}${t.time?`<span class="mt">${t.time}</span>`:''}${escapeHtml(t.text)}</div>`).join('');
+    inner += list.slice(0,SHOW).map(t=>{ const rng=(t.time||t.end)?`<span class="mt">${t.time||''}${t.end?'–'+t.end:''}</span> `:''; return `<div class="mini p${t.prio||0} ${t.done?'done':''}">${t.done?'✓ ':''}${rng}${escapeHtml(t.text)}</div>`; }).join('');
     if(list.length>SHOW) inner+=`<div class="mini">+${list.length-SHOW} more</div>`;
     cell.innerHTML=inner;
     cell.onclick=()=>openDayModal(k);
@@ -427,8 +431,13 @@ function openDayModal(k){
     <div class="pchips" id="mPrio">
       ${[0,3,2,1].map(p=>`<div class="pchip ${p===0?'sel':''}" data-p="${p}">${PLABEL[p]}</div>`).join('')}
     </div>
+    <div class="trow">
+      <span class="sub">Time</span>
+      <input type="time" id="mStart" class="mtime" title="Start" />
+      <span class="tdash">–</span>
+      <input type="time" id="mEnd" class="mtime" title="End" />
+    </div>
     <div class="addrow" style="border:none; padding:8px 0 4px;">
-      <input type="time" id="mTime" class="mtime" title="Optional time" />
       <input id="mInput" placeholder="Add a task…" />
       <button id="mAdd">＋</button>
     </div>
@@ -444,15 +453,16 @@ function openDayModal(k){
     ml.innerHTML = l.length ? '' : '<div class="empty">No tasks yet — add one below.</div>';
     l.forEach(t=>{
       const row=document.createElement('div'); row.className='taskline'; row.style.borderTop='1px solid var(--line)';
-      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="priority"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div><input type="time" class="rowtime" value="${t.time||''}" title="Set time" /><button class="del">✕</button>`;
+      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="priority"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div><span class="rowtimes"><input type="time" class="rowtime rt-s" value="${t.time||''}" title="Start" /><span class="tdash">–</span><input type="time" class="rowtime rt-e" value="${t.end||''}" title="End" /></span><button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); draw(); refreshTasks(); };
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); draw(); refreshTasks(); };
-      row.querySelector('.rowtime').onchange=e=>{ t.time=e.target.value||''; persist(); draw(); refreshTasks(); };
+      row.querySelector('.rt-s').onchange=e=>{ t.time=e.target.value||''; persist(); draw(); refreshTasks(); };
+      row.querySelector('.rt-e').onchange=e=>{ t.end=e.target.value||''; persist(); draw(); refreshTasks(); };
       row.querySelector('.del').onclick=()=>{ tasks[k]=(tasks[k]||[]).filter(x=>x.id!==t.id); if(!tasks[k].length)delete tasks[k]; persist(); draw(); refreshTasks(); };
       ml.appendChild(row);
     });
   };
-  const add=()=>{ const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v)return; const tm=back.querySelector('#mTime').value||''; (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:tm}); inp.value=''; persist(); draw(); refreshTasks(); inp.focus(); };
+  const add=()=>{ const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v)return; const s=back.querySelector('#mStart').value||'', e=back.querySelector('#mEnd').value||''; (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:s,end:e}); inp.value=''; persist(); draw(); refreshTasks(); inp.focus(); };
   syncSortBtns();
   draw();
   back.querySelector('#mAdd').onclick=add;
@@ -475,7 +485,7 @@ function renderWeek(){
     box.innerHTML=`<div class="wh ${isT?'today':''}"><span class="wd">${DOW[d.getDay()]}</span><span class="wnum">${MON[d.getMonth()].slice(0,3)} ${d.getDate()}</span>${isT?'<span class="spacer"></span><span class="sub" style="color:var(--accent)">Today</span>':''}</div>`;
     list.forEach(t=>{
       const row=document.createElement('div'); row.className='taskline';
-      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div>${t.time?`<span class="tm">${fmtTime(t.time)}</span>`:''}<button class="del">✕</button>`;
+      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div>${(t.time||t.end)?`<span class="tm">${fmtRange(t.time,t.end)}</span>`:''}<button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); renderWeek(); };
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); renderWeek(); };
       row.querySelector('.del').onclick=()=>{ tasks[k]=(tasks[k]||[]).filter(x=>x.id!==t.id); if(!tasks[k].length)delete tasks[k]; persist(); renderWeek(); };
