@@ -3,20 +3,22 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<meta name="theme-color" content="#0f172a" />
+<meta name="theme-color" content="#1c1a17" />
 <title>Track — Tasks & Habits</title>
 <style>
   :root{
-    --bg:#0f172a; --panel:#1e293b; --panel2:#273449; --line:#334155;
-    --text:#e2e8f0; --muted:#94a3b8; --accent:#6366f1; --accent2:#8b5cf6;
-    --good:#22c55e; --warn:#f59e0b; --danger:#ef4444;
-    --p-high:#ef4444; --p-med:#f59e0b; --p-low:#38bdf8;
-    --radius:14px; --shadow:0 6px 20px rgba(0,0,0,.25);
+    --bg:#1c1a17; --panel:#262320; --panel2:#312d28; --line:#3f3a34;
+    --text:#ece4d8; --muted:#a89d8d; --accent:#e07a5f; --accent2:#efa765;
+    --good:#5fae6e; --warn:#e0a24f; --danger:#e0654f;
+    --p-high:#e0654f; --p-med:#e0a24f; --p-low:#6fb0c9;
+    --radius:14px; --shadow:0 6px 20px rgba(0,0,0,.35);
   }
   html[data-theme="light"]{
-    --bg:#f1f5f9; --panel:#ffffff; --panel2:#eef2f7; --line:#dbe2ea;
-    --text:#0f172a; --muted:#64748b; --accent:#6366f1; --accent2:#8b5cf6;
-    --shadow:0 6px 20px rgba(15,23,42,.08);
+    --bg:#f6f1e9; --panel:#fffcf7; --panel2:#efe7db; --line:#e6ddce;
+    --text:#403a31; --muted:#8b8073; --accent:#e07a5f; --accent2:#efa765;
+    --good:#4f9e5e; --warn:#cf9038; --danger:#d1543f;
+    --p-high:#d1543f; --p-med:#cf9038; --p-low:#4f92a8;
+    --shadow:0 8px 24px rgba(120,90,60,.12);
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0; height:100%;}
@@ -476,6 +478,7 @@ function openDayModal(k){
   const add=()=>{ const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v)return; const s=back.querySelector('#mStart').value||'', e=back.querySelector('#mEnd').value||''; (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:s,end:e}); inp.value=''; persist(); draw(); refreshTasks(); inp.focus(); };
   syncSortBtns();
   draw();
+  back.querySelector('#mStart').addEventListener('change',()=>{ const e=back.querySelector('#mEnd'); if(!e.value) e.focus(); });   // jump to end after picking start
   back.querySelector('#mAdd').onclick=add;
   back.querySelector('#mInput').addEventListener('keydown',e=>{if(e.key==='Enter')add();});
   back.querySelector('#mClose').onclick=()=>back.remove();
@@ -653,7 +656,7 @@ function setTaskView(v){
   document.getElementById('tWeekWrap').classList.toggle('hidden',v!=='week');
   refreshTasks();
 }
-function setTheme(t){ document.documentElement.setAttribute('data-theme',t); localStorage.setItem('tk_theme',t); document.getElementById('themeBtn').textContent = t==='light'?'☀️':'🌙'; document.querySelector('meta[name=theme-color]').setAttribute('content', t==='light'?'#6366f1':'#0f172a'); }
+function setTheme(t){ document.documentElement.setAttribute('data-theme',t); localStorage.setItem('tk_theme',t); document.getElementById('themeBtn').textContent = t==='light'?'☀️':'🌙'; document.querySelector('meta[name=theme-color]').setAttribute('content', t==='light'?'#e07a5f':'#1c1a17'); }
 
 document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 document.querySelectorAll('[data-taskview]').forEach(b=>b.onclick=()=>setTaskView(b.dataset.taskview));
@@ -891,7 +894,7 @@ function eventBody(t,date){
     end:{dateTime:`${date}T${end}:00`, timeZone:TZ},
     extendedProperties:{private:{trackId:t.id}} };
 }
-function gtaskBody(t,date){ return { title:t.text||'(untitled)', notes:`[track:${t.id}]`, due:`${date}T00:00:00.000Z`, status:t.done?'completed':'needsAction' }; }
+function gtaskBody(t,date){ return { title:t.text||'(untitled)', due:`${date}T00:00:00.000Z`, status:t.done?'completed':'needsAction' }; }
 const JSONH={'Content-Type':'application/json'};
 async function gCreate(type,t,date){
   const url=type==='event'?CAL_URL:TASKS_URL;
@@ -939,8 +942,9 @@ async function gPush(){
       } else if(t.gcalId){ await gDelete('event',t.gcalId); t.gcalId=null; changed=true; }
       // Google-Tasks channel
       if(wantT){
-        if(!t.gtaskId){ t.gtaskId=await gCreate('task',t,date); changed=true; }
+        if(!t.gtaskId){ t.gtaskId=await gCreate('task',t,date); t.gNotesClean=true; changed=true; }
         else if(t.gHash!==hash){ t.gtaskId=await gUpdate('task',t.gtaskId,t,date); changed=true; }
+        if(t.gtaskId && !t.gNotesClean){ try{ await gApi(TASKS_URL+'/'+encodeURIComponent(t.gtaskId),{method:'PATCH',headers:JSONH,body:JSON.stringify({notes:''})}); }catch(e){} t.gNotesClean=true; changed=true; }   // one-time: strip old [track:] tag
       } else if(t.gtaskId){ await gDelete('task',t.gtaskId); t.gtaskId=null; changed=true; }
       t.gHash=hash;
       known[id]={gcalId:t.gcalId||null, gtaskId:t.gtaskId||null};
