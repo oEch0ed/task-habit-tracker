@@ -127,7 +127,7 @@
   .caldow div{text-align:center; font-size:11px; color:var(--muted); padding:4px 0; font-weight:600;}
   .caldow div.we{color:#f472b6;}
   .calgrid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px;}
-  .cell{background:var(--panel); border:1px solid var(--line); border-radius:10px; min-height:60px; padding:5px 4px; cursor:pointer; position:relative; overflow:hidden; display:flex; flex-direction:column; gap:2px;}
+  .cell{background:var(--panel); border:1px solid var(--line); border-radius:10px; min-height:92px; padding:5px 4px; cursor:pointer; position:relative; overflow:hidden; display:flex; flex-direction:column; gap:2px;}
   .cell.out{opacity:.4;}
   .cell .cn{font-size:13px; font-weight:600;}
   .cell.today .cn{color:#fff; background:var(--accent); width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center;}
@@ -135,6 +135,7 @@
   .cell .mini::before{content:""; position:absolute; left:0; top:3px; bottom:3px; width:3px; border-radius:2px; background:var(--muted);}
   .cell .mini.p3::before{background:var(--p-high);} .cell .mini.p2::before{background:var(--p-med);} .cell .mini.p1::before{background:var(--p-low);}
   .cell .mini.done{text-decoration:line-through; opacity:.5;}
+  .cell .mini .mt{color:var(--accent); font-weight:700; margin-right:2px;}
   .cell .cnt{position:absolute; top:4px; right:5px; font-size:10px; background:var(--accent2); color:#fff; border-radius:99px; padding:0 5px; font-weight:700;}
 
   .weekday{background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow:hidden; box-shadow:var(--shadow);}
@@ -163,6 +164,11 @@
   .modalback{position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:30; display:flex; align-items:flex-end; justify-content:center; animation:fade .2s;}
   .modal{background:var(--panel); width:100%; max-width:520px; border-radius:18px 18px 0 0; padding:16px 16px calc(20px + env(safe-area-inset-bottom)); border-top:1px solid var(--line);}
   .modal h3{margin:2px 0 12px;}
+  .msort{display:flex; align-items:center; gap:6px; margin-bottom:10px;}
+  .taskline .tm{font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap;}
+  .mtime,.rowtime{background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:9px; padding:8px; font-size:14px; outline:none; flex:0 0 auto; -webkit-appearance:none; min-width:0;}
+  .rowtime{padding:5px 6px; font-size:12px; color:var(--muted);}
+  .rowtime:focus,.mtime:focus{border-color:var(--accent); color:var(--text);}
   .pchips{display:flex; gap:8px; margin:6px 0 2px;}
   .pchip{flex:1; text-align:center; padding:8px; border-radius:10px; border:1px solid var(--line); font-size:12px; font-weight:600; cursor:pointer; color:var(--muted);}
   .pchip.sel{color:#fff;}
@@ -311,8 +317,15 @@ const firebaseConfig = {
 
 /* ---------------- storage ---------------- */
 const DB = {
-  load(k,def){ try{return JSON.parse(localStorage.getItem(k)) ?? def;}catch(e){return def;} },
-  save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
+  mem:{},                       // in-memory fallback when localStorage is blocked (private mode, PWA storage partitioning, quota)
+  load(k,def){
+    try{ const v=localStorage.getItem(k); if(v!=null) return JSON.parse(v); }catch(e){}
+    return (k in DB.mem) ? DB.mem[k] : def;
+  },
+  save(k,v){
+    DB.mem[k]=v;
+    try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){ /* storage unavailable — keep in memory; cloud still syncs */ }
+  }
 };
 let tasks  = DB.load('tk_tasks', {});   // { 'YYYY-MM-DD': [ {id,text,done,prio} ] }
 let habits = DB.load('tk_habits', []);  // [ {id,name,goal} ]  goal = times/week (0 = daily/none)
@@ -335,6 +348,16 @@ const PLABEL = ['None','Low','Med','High'];
 
 /* ---------------- state ---------------- */
 let tab='tasks', taskView='month';
+let taskSort = DB.load('tk_tasksort','time');   // 'time' | 'prio'
+function setTaskSort(s){ taskSort=s; DB.save('tk_tasksort',s); }
+function sortTasks(list){
+  return list.map((t,i)=>[t,i]).sort((x,y)=>{
+    if(taskSort==='prio'){ const d=(y[0].prio||0)-(x[0].prio||0); if(d) return d; }
+    else { const A=x[0].time||'~', B=y[0].time||'~'; if(A!==B) return A<B?-1:1; } // untimed sort last
+    return x[1]-y[1];   // stable: preserve insertion order on ties
+  }).map(x=>x[0]);
+}
+function fmtTime(t){ if(!t) return ''; const [h,m]=t.split(':').map(Number); const ap=h<12?'AM':'PM'; return `${((h+11)%12)+1}:${String(m).padStart(2,'0')} ${ap}`; }
 let tMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let weekStart = startOfWeek(today);
 let hMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -378,11 +401,12 @@ function renderMonthGrid(){
     const out=d.getMonth()!==tMonth.getMonth();
     const cell=document.createElement('div');
     cell.className='cell'+(out?' out':'')+(isSameDay(d,today)?' today':'');
-    const list=tasks[k]||[];
+    const list=sortTasks(tasks[k]||[]);
+    const SHOW=4;
     let inner=`<div class="cn">${d.getDate()}</div>`;
     if(list.length){ inner=`<span class="cnt">${list.filter(t=>!t.done).length||'✓'}</span>`+inner; }
-    inner += list.slice(0,2).map(t=>`<div class="mini p${t.prio||0} ${t.done?'done':''}">${t.done?'✓ ':''}${escapeHtml(t.text)}</div>`).join('');
-    if(list.length>2) inner+=`<div class="mini">+${list.length-2} more</div>`;
+    inner += list.slice(0,SHOW).map(t=>`<div class="mini p${t.prio||0} ${t.done?'done':''}">${t.done?'✓ ':''}${t.time?`<span class="mt">${t.time}</span>`:''}${escapeHtml(t.text)}</div>`).join('');
+    if(list.length>SHOW) inner+=`<div class="mini">+${list.length-SHOW} more</div>`;
     cell.innerHTML=inner;
     cell.onclick=()=>openDayModal(k);
     grid.appendChild(cell);
@@ -394,11 +418,17 @@ function openDayModal(k){
   const back=document.createElement('div'); back.className='modalback';
   back.innerHTML=`<div class="modal">
     <h3>${DOW[d.getDay()]}, ${MON[d.getMonth()]} ${d.getDate()}</h3>
+    <div class="msort">
+      <span class="sub">Sort</span>
+      <button class="pillbtn" data-sort="time">By time</button>
+      <button class="pillbtn" data-sort="prio">By priority</button>
+    </div>
     <div id="mList"></div>
     <div class="pchips" id="mPrio">
       ${[0,3,2,1].map(p=>`<div class="pchip ${p===0?'sel':''}" data-p="${p}">${PLABEL[p]}</div>`).join('')}
     </div>
     <div class="addrow" style="border:none; padding:8px 0 4px;">
+      <input type="time" id="mTime" class="mtime" title="Optional time" />
       <input id="mInput" placeholder="Add a task…" />
       <button id="mAdd">＋</button>
     </div>
@@ -407,19 +437,23 @@ function openDayModal(k){
   document.body.appendChild(back);
   let prio=0;
   back.querySelectorAll('.pchip').forEach(c=>c.onclick=()=>{ prio=+c.dataset.p; back.querySelectorAll('.pchip').forEach(x=>x.classList.toggle('sel',x===c)); });
+  const syncSortBtns=()=>back.querySelectorAll('[data-sort]').forEach(b=>b.classList.toggle('active',b.dataset.sort===taskSort));
+  back.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{ setTaskSort(b.dataset.sort); syncSortBtns(); draw(); refreshTasks(); });
   const draw=()=>{
-    const l=tasks[k]||[]; const ml=back.querySelector('#mList');
+    const l=sortTasks(tasks[k]||[]); const ml=back.querySelector('#mList');
     ml.innerHTML = l.length ? '' : '<div class="empty">No tasks yet — add one below.</div>';
     l.forEach(t=>{
       const row=document.createElement('div'); row.className='taskline'; row.style.borderTop='1px solid var(--line)';
-      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="priority"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div><button class="del">✕</button>`;
+      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="priority"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div><input type="time" class="rowtime" value="${t.time||''}" title="Set time" /><button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); draw(); refreshTasks(); };
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); draw(); refreshTasks(); };
-      row.querySelector('.del').onclick=()=>{ tasks[k]=l.filter(x=>x.id!==t.id); if(!tasks[k].length)delete tasks[k]; persist(); draw(); refreshTasks(); };
+      row.querySelector('.rowtime').onchange=e=>{ t.time=e.target.value||''; persist(); draw(); refreshTasks(); };
+      row.querySelector('.del').onclick=()=>{ tasks[k]=(tasks[k]||[]).filter(x=>x.id!==t.id); if(!tasks[k].length)delete tasks[k]; persist(); draw(); refreshTasks(); };
       ml.appendChild(row);
     });
   };
-  const add=()=>{ const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v)return; (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio}); inp.value=''; persist(); draw(); refreshTasks(); inp.focus(); };
+  const add=()=>{ const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v)return; const tm=back.querySelector('#mTime').value||''; (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:tm}); inp.value=''; persist(); draw(); refreshTasks(); inp.focus(); };
+  syncSortBtns();
   draw();
   back.querySelector('#mAdd').onclick=add;
   back.querySelector('#mInput').addEventListener('keydown',e=>{if(e.key==='Enter')add();});
@@ -436,15 +470,15 @@ function renderWeek(){
   const wrap=document.getElementById('weekList'); wrap.innerHTML='';
   for(let i=0;i<7;i++){
     const d=addDays(weekStart,i); const k=key(d); const isT=isSameDay(d,today);
-    const list=tasks[k]||[];
+    const list=sortTasks(tasks[k]||[]);
     const box=document.createElement('div'); box.className='weekday'+(isT?' today':'');
     box.innerHTML=`<div class="wh ${isT?'today':''}"><span class="wd">${DOW[d.getDay()]}</span><span class="wnum">${MON[d.getMonth()].slice(0,3)} ${d.getDate()}</span>${isT?'<span class="spacer"></span><span class="sub" style="color:var(--accent)">Today</span>':''}</div>`;
     list.forEach(t=>{
       const row=document.createElement('div'); row.className='taskline';
-      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div><button class="del">✕</button>`;
+      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div>${t.time?`<span class="tm">${fmtTime(t.time)}</span>`:''}<button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); renderWeek(); };
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); renderWeek(); };
-      row.querySelector('.del').onclick=()=>{ tasks[k]=list.filter(x=>x.id!==t.id); if(!tasks[k].length)delete tasks[k]; persist(); renderWeek(); };
+      row.querySelector('.del').onclick=()=>{ tasks[k]=(tasks[k]||[]).filter(x=>x.id!==t.id); if(!tasks[k].length)delete tasks[k]; persist(); renderWeek(); };
       box.appendChild(row);
     });
     const ar=document.createElement('div'); ar.className='addrow';
@@ -644,18 +678,28 @@ function cloudPush(){
   }, 700);
 }
 
+function setLocalData(t,h,l){
+  cloud.applyingRemote=true;
+  tasks=t; habits=h; hlog=l;
+  DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog);
+  cloud.applyingRemote=false;
+  rerenderAll();
+}
 function cloudSubscribe(){
   cloud.unsub = cloud.db.collection('users').doc(cloud.uid).onSnapshot(snap=>{
-    if(!snap.exists){ cloudPush(); return; }      // first login on a fresh account: seed cloud from local
+    if(!snap.exists){
+      // Brand-new account. Seed from on-device data ONLY if that data isn't
+      // another account's — otherwise start this account empty (no cross-account leak).
+      const owner = localStorage.getItem('tk_owner');
+      if(owner && owner !== cloud.uid) setLocalData({}, [], {});
+      localStorage.setItem('tk_owner', cloud.uid);
+      cloudPush();
+      return;
+    }
     if(snap.metadata.hasPendingWrites) return;    // ignore the echo of our own write
     const data=snap.data()||{};
-    cloud.applyingRemote=true;
-    tasks  = data.tasks  || {};
-    habits = data.habits || [];
-    hlog   = data.hlog   || {};
-    DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog);
-    cloud.applyingRemote=false;
-    rerenderAll();
+    setLocalData(data.tasks||{}, data.habits||[], data.hlog||{});
+    localStorage.setItem('tk_owner', cloud.uid);
     setSync('synced');
   }, err=>{ console.error(err); setSync('error'); });
 }
@@ -672,6 +716,10 @@ function onAuth(user){
     cloudSubscribe();
   } else {
     cloud.uid=null;
+    // Signed out: clear on-device data so nothing lingers for the next account.
+    // It's safe in the cloud and reloads on next sign-in.
+    setLocalData({}, [], {});
+    localStorage.removeItem('tk_owner');
     overlay.classList.remove('hidden');
     acct.classList.add('hidden');
   }
