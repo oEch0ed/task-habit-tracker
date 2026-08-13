@@ -192,6 +192,7 @@
   .taskline .tt{cursor:pointer;}
   .renameinp{flex:1; font-size:14px; background:var(--panel2); border:1px solid var(--accent); border-radius:6px; padding:4px 6px; color:var(--text); outline:none; min-width:0;}
   .cname{cursor:pointer;}
+  .weekday .addtask{display:block; margin:8px 12px 12px; padding:9px; font-size:13px;}
   .tdash{color:var(--muted); font-weight:600;}
   .pchips{display:flex; gap:8px; margin:6px 0 2px;}
   .pchip{flex:1; text-align:center; padding:8px; border-radius:10px; border:1px solid var(--line); font-size:12px; font-weight:600; cursor:pointer; color:var(--muted);}
@@ -721,38 +722,36 @@ function renderUni(){
       row.querySelector('.del').onclick=()=>{ c.items=c.items.filter(x=>x.id!==it.id); persistCourses(); renderUni(); };
       box.appendChild(row);
     });
-    const ar=document.createElement('div'); ar.className='addrow';
-    ar.innerHTML=`<input placeholder="Add task…" /><button>＋</button>`;
-    const inp=ar.querySelector('input');
-    const add=()=>{ const v=inp.value.trim(); if(!v)return; c.items.push({id:uid(),text:v,done:false}); inp.value=''; persistCourses(); renderUni(); };
-    ar.querySelector('button').onclick=add;
-    inp.addEventListener('keydown',e=>{if(e.key==='Enter')add();});
+    const ar=document.createElement('button'); ar.type='button'; ar.className='btn ghost addtask'; ar.textContent='＋ Add task';
+    ar.onclick=()=>openSubtaskModal(c,null);
     box.appendChild(ar);
     wrap.appendChild(box);
   });
   if(m) m.scrollTop=y;   // preserve scroll across the full rebuild
 }
 function openSubtaskModal(c,it){
+  const isNew=!it; const cur=it||{text:'',desc:'',due:''};
   const back=document.createElement('div'); back.className='modalback';
   back.innerHTML=`<div class="modal">
-    <h3>Edit task</h3>
-    <input class="txt" id="stName" value="${escapeHtml(it.text)}" style="margin-bottom:12px;" />
+    <h3>${isNew?'New task · '+escapeHtml(c.name):'Edit task'}</h3>
+    <input class="txt" id="stName" value="${escapeHtml(cur.text)}" placeholder="Task…" style="margin-bottom:12px;" />
     <div class="sub" style="margin-bottom:6px;">Due date (optional)</div>
-    <input class="txt" id="stDue" type="date" value="${it.due||''}" style="margin-bottom:12px;" />
+    <input class="txt" id="stDue" type="date" value="${cur.due||''}" style="margin-bottom:12px;" />
     <div class="sub" style="margin-bottom:6px;">Description (optional)</div>
-    <textarea class="txt" id="stDesc" rows="4" placeholder="Notes, links, details…">${escapeHtml(it.desc||'')}</textarea>
+    <textarea class="txt" id="stDesc" rows="4" placeholder="Notes, links, details…">${escapeHtml(cur.desc||'')}</textarea>
     <div class="row" style="margin-top:14px; gap:8px;">
       <button class="btn ghost" id="stCancel" style="flex:1;">Cancel</button>
-      <button class="btn" id="stSave" style="flex:1;">Save</button>
+      <button class="btn" id="stSave" style="flex:1;">${isNew?'Add':'Save'}</button>
     </div>
   </div>`;
   document.body.appendChild(back);
   back.onclick=e=>{ if(e.target===back)back.remove(); };
   back.querySelector('#stCancel').onclick=()=>back.remove();
   back.querySelector('#stSave').onclick=()=>{
-    const nm=back.querySelector('#stName').value.trim(); if(nm)it.text=nm;
-    it.desc=back.querySelector('#stDesc').value.trim();
-    it.due=back.querySelector('#stDue').value||'';
+    const nm=back.querySelector('#stName').value.trim(); if(!nm){ back.remove(); return; }   // no name → nothing to save
+    const desc=back.querySelector('#stDesc').value.trim(), due=back.querySelector('#stDue').value||'';
+    if(isNew){ (c.items=c.items||[]).push({id:uid(),text:nm,done:false,desc,due}); }
+    else { it.text=nm; it.desc=desc; it.due=due; }
     persistCourses(); back.remove(); renderUni();
   };
   setTimeout(()=>back.querySelector('#stName').focus(),50);
@@ -1433,7 +1432,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.0.8';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.0.9';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
