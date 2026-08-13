@@ -381,6 +381,7 @@ const PLABEL = ['None','Low','Med','High'];
 
 /* ---------------- state ---------------- */
 let tab='tasks', taskView='month';
+const showDone={};   // per-day 'show completed' toggle state (transient, keyed by date) for daily & weekly views
 let taskSort = DB.load('tk_tasksort','time');   // 'time' | 'prio'
 function setTaskSort(s){ taskSort=s; DB.save('tk_tasksort',s); }
 function sortTasks(list){
@@ -436,11 +437,12 @@ function renderMonthGrid(){
     const cell=document.createElement('div');
     cell.className='cell'+(out?' out':'')+(isSameDay(d,today)?' today':'');
     const list=sortTasks(tasks[k]||[]);
+    const active=list.filter(t=>!t.done);   // month grid shows only open tasks
     const SHOW=4;
     let inner=`<div class="cn">${d.getDate()}</div>`;
-    if(list.length){ inner=`<span class="cnt">${list.filter(t=>!t.done).length||'✓'}</span>`+inner; }
-    inner += list.slice(0,SHOW).map(t=>{ const rng=(t.time||t.end)?`<span class="mt">${t.time||''}${t.end?'–'+t.end:''}</span> `:''; return `<div class="mini p${t.prio||0} ${t.done?'done':''}">${t.done?'✓ ':''}${rng}${escapeHtml(t.text)}</div>`; }).join('');
-    if(list.length>SHOW) inner+=`<div class="mini">+${list.length-SHOW} more</div>`;
+    if(list.length){ inner=`<span class="cnt">${active.length||'✓'}</span>`+inner; }
+    inner += active.slice(0,SHOW).map(t=>{ const rng=(t.time||t.end)?`<span class="mt">${t.time||''}${t.end?'–'+t.end:''}</span> `:''; return `<div class="mini p${t.prio||0}">${rng}${escapeHtml(t.text)}</div>`; }).join('');
+    if(active.length>SHOW) inner+=`<div class="mini">+${active.length-SHOW} more</div>`;
     cell.innerHTML=inner;
     cell.onclick=()=>openDayModal(k);
     grid.appendChild(cell);
@@ -478,19 +480,30 @@ function openDayModal(k){
   back.querySelectorAll('.pchip').forEach(c=>c.onclick=()=>{ prio=+c.dataset.p; back.querySelectorAll('.pchip').forEach(x=>x.classList.toggle('sel',x===c)); });
   const syncSortBtns=()=>back.querySelectorAll('[data-sort]').forEach(b=>b.classList.toggle('active',b.dataset.sort===taskSort));
   back.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{ setTaskSort(b.dataset.sort); syncSortBtns(); draw(); refreshTasks(); });
+  const rowFor=(t)=>{
+    const row=document.createElement('div'); row.className='taskline'; row.style.borderTop='1px solid var(--line)';
+    row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="priority"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div><span class="rowtimes"><input type="time" class="rowtime rt-s" value="${t.time||''}" title="Start" /><span class="tdash">–</span><input type="time" class="rowtime rt-e" value="${t.end||''}" title="End" /></span><button class="del">✕</button>`;
+    row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); draw(); refreshTasks(); };
+    row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); draw(); refreshTasks(); };
+    row.querySelector('.rt-s').onchange=e=>{ t.time=e.target.value||''; persist(); draw(); refreshTasks(); };
+    row.querySelector('.rt-e').onchange=e=>{ t.end=e.target.value||''; persist(); draw(); refreshTasks(); };
+    row.querySelector('.del').onclick=()=>{ trashTask(k,t.id); draw(); refreshTasks(); };
+    return row;
+  };
   const draw=()=>{
-    const l=sortTasks(tasks[k]||[]); const ml=back.querySelector('#mList');
-    ml.innerHTML = l.length ? '' : '<div class="empty">No tasks yet — add one below.</div>';
-    l.forEach(t=>{
-      const row=document.createElement('div'); row.className='taskline'; row.style.borderTop='1px solid var(--line)';
-      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="priority"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div><span class="rowtimes"><input type="time" class="rowtime rt-s" value="${t.time||''}" title="Start" /><span class="tdash">–</span><input type="time" class="rowtime rt-e" value="${t.end||''}" title="End" /></span><button class="del">✕</button>`;
-      row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); draw(); refreshTasks(); };
-      row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); draw(); refreshTasks(); };
-      row.querySelector('.rt-s').onchange=e=>{ t.time=e.target.value||''; persist(); draw(); refreshTasks(); };
-      row.querySelector('.rt-e').onchange=e=>{ t.end=e.target.value||''; persist(); draw(); refreshTasks(); };
-      row.querySelector('.del').onclick=()=>{ trashTask(k,t.id); draw(); refreshTasks(); };
-      ml.appendChild(row);
-    });
+    const ml=back.querySelector('#mList'); ml.innerHTML='';
+    const all=sortTasks(tasks[k]||[]);
+    if(!all.length){ ml.innerHTML='<div class="empty">No tasks yet — add one below.</div>'; return; }
+    const active=all.filter(t=>!t.done), done=all.filter(t=>t.done);
+    active.forEach(t=>ml.appendChild(rowFor(t)));
+    if(!active.length){ const e=document.createElement('div'); e.className='empty'; e.style.padding='16px 10px'; e.textContent='All done for this day 🎉'; ml.appendChild(e); }
+    if(done.length){
+      const tog=document.createElement('button'); tog.type='button'; tog.className='pillbtn'+(showDone[k]?' active':''); tog.style.cssText='width:100%; margin-top:10px;';
+      tog.textContent=(showDone[k]?'Hide':'Show')+` completed (${done.length})`;
+      tog.onclick=()=>{ showDone[k]=!showDone[k]; draw(); };
+      ml.appendChild(tog);
+      if(showDone[k]) done.forEach(t=>ml.appendChild(rowFor(t)));
+    }
   };
   const add=()=>{ const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v)return; const s=back.querySelector('#mStart').value||'', e=back.querySelector('#mEnd').value||''; (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:s,end:e}); inp.value=''; persist(); draw(); refreshTasks(); inp.focus(); };
   syncSortBtns();
@@ -582,16 +595,25 @@ function renderWeek(){
   for(let i=0;i<7;i++){
     const d=addDays(weekStart,i); const k=key(d); const isT=isSameDay(d,today);
     const list=sortTasks(tasks[k]||[]);
+    const active=list.filter(t=>!t.done), done=list.filter(t=>t.done);
     const box=document.createElement('div'); box.className='weekday'+(isT?' today':'');
     box.innerHTML=`<div class="wh ${isT?'today':''}"><span class="wd">${DOW[d.getDay()]}</span><span class="wnum">${MON[d.getMonth()].slice(0,3)} ${d.getDate()}</span>${isT?'<span class="spacer"></span><span class="sub" style="color:var(--accent)">Today</span>':''}</div>`;
-    list.forEach(t=>{
+    const rowFor=(t)=>{
       const row=document.createElement('div'); row.className='taskline';
       row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div>${(t.time||t.end)?`<span class="tm">${fmtRange(t.time,t.end)}</span>`:''}<button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); renderWeek(); };
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); renderWeek(); };
       row.querySelector('.del').onclick=()=>{ trashTask(k,t.id); renderWeek(); };
-      box.appendChild(row);
-    });
+      return row;
+    };
+    active.forEach(t=>box.appendChild(rowFor(t)));
+    if(done.length){
+      const tog=document.createElement('button'); tog.type='button'; tog.className='pillbtn'+(showDone[k]?' active':''); tog.style.cssText='width:100%; margin:6px 0 2px;';
+      tog.textContent=(showDone[k]?'Hide':'Show')+` completed (${done.length})`;
+      tog.onclick=()=>{ showDone[k]=!showDone[k]; renderWeek(); };
+      box.appendChild(tog);
+      if(showDone[k]) done.forEach(t=>box.appendChild(rowFor(t)));
+    }
     const ar=document.createElement('div'); ar.className='addrow';
     ar.innerHTML=`<input placeholder="Plan something…" /><button>＋</button>`;
     const inp=ar.querySelector('input');
