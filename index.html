@@ -149,6 +149,8 @@
   .cell .mini::before{content:""; position:absolute; left:0; top:3px; bottom:3px; width:3px; border-radius:2px; background:var(--muted);}
   .cell .mini.p3::before{background:var(--p-high);} .cell .mini.p2::before{background:var(--p-med);} .cell .mini.p1::before{background:var(--p-low);}
   .cell .mini.done{text-decoration:line-through; opacity:.5;}
+  .cell .mini.uni{color:var(--brk); font-weight:600;}
+  .cell .mini.uni::before{background:var(--brk);}
   .cell .mini .mt{color:var(--accent); font-weight:700; margin-right:2px;}
   .cell .cnt{position:absolute; top:4px; right:5px; font-size:10px; background:var(--accent2); color:#fff; border-radius:99px; padding:0 5px; font-weight:700;}
 
@@ -425,6 +427,8 @@ function sortTasks(list){
 }
 function fmtTime(t){ if(!t) return ''; const [h,m]=t.split(':').map(Number); const ap=h<12?'AM':'PM'; return `${((h+11)%12)+1}:${String(m).padStart(2,'0')} ${ap}`; }
 function fmtRange(a,b){ if(a&&b) return `${fmtTime(a)} – ${fmtTime(b)}`; if(a) return fmtTime(a); if(b) return `until ${fmtTime(b)}`; return ''; }
+function fmtDate(k){ const d=parse(k); return `${MON[d.getMonth()]} ${d.getDate()}`; }
+function coursesDueOn(k){ const out=[]; courses.forEach(c=>(c.items||[]).forEach(it=>{ if(it.due===k && !it.done) out.push({c,it}); })); return out; }
 /* Dropdown time picker (predictable on mobile & desktop; no native <input type=time> focus quirks) */
 function timeParts(hhmm){ if(!hhmm) return {h:'', m:0, ap:'AM'}; let [H,M]=hhmm.split(':').map(Number); const ap=H<12?'AM':'PM'; let h=H%12; if(h===0)h=12; return {h, m:M, ap}; }
 function toHHMM(h,m,ap){ if(h===''||h==null) return ''; h=+h; if(ap==='PM'&&h!==12)h+=12; if(ap==='AM'&&h===12)h=0; return pad(h)+':'+pad(+m||0); }
@@ -482,11 +486,17 @@ function renderMonthGrid(){
     cell.className='cell'+(out?' out':'')+(isSameDay(d,today)?' today':'');
     const list=sortTasks(tasks[k]||[]);
     const active=list.filter(t=>!t.done);   // month grid shows only open tasks
+    const uniDue=coursesDueOn(k);            // uni subtasks due this day
     const SHOW=4;
     let inner=`<div class="cn">${d.getDate()}</div>`;
-    if(list.length){ inner=`<span class="cnt">${active.length||'✓'}</span>`+inner; }
-    inner += active.slice(0,SHOW).map(t=>{ const rng=t.time?`<span class="mt">${t.time}</span> `:''; return `<div class="mini p${t.prio||0}">${rng}${escapeHtml(t.text)}</div>`; }).join('');
-    if(active.length>SHOW) inner+=`<div class="mini">+${active.length-SHOW} more</div>`;
+    const count=active.length+uniDue.length;
+    if(list.length||uniDue.length){ inner=`<span class="cnt">${count||'✓'}</span>`+inner; }
+    const minis=[
+      ...active.map(t=>{ const rng=t.time?`<span class="mt">${t.time}</span> `:''; return `<div class="mini p${t.prio||0}">${rng}${escapeHtml(t.text)}</div>`; }),
+      ...uniDue.map(u=>`<div class="mini uni" title="${escapeHtml(u.c.name)}">🎓 ${escapeHtml(u.it.text)}</div>`)
+    ];
+    inner += minis.slice(0,SHOW).join('');
+    if(minis.length>SHOW) inner+=`<div class="mini">+${minis.length-SHOW} more</div>`;
     cell.innerHTML=inner;
     cell.onclick=()=>openDayModal(k);
     grid.appendChild(cell);
@@ -705,7 +715,7 @@ function renderUni(){
     box.querySelector('.cdel').onclick=()=>{ if(confirm(`Delete course "${c.name}"${total?` and its ${total} task${total===1?'':'s'}`:''}?`)){ courses=courses.filter(x=>x.id!==c.id); persistCourses(); renderUni(); } };
     c.items.forEach(it=>{
       const row=document.createElement('div'); row.className='taskline';
-      row.innerHTML=`<div class="tc ${it.done?'on':''}">✓</div><div class="ttwrap" title="Tap to edit / add description"><div class="tt ${it.done?'done':''}">${escapeHtml(it.text)}${it.desc?'<span class="noteic">📝</span>':''}</div>${it.desc?`<div class="subdesc">${escapeHtml(it.desc)}</div>`:''}</div><button class="del">✕</button>`;
+      row.innerHTML=`<div class="tc ${it.done?'on':''}">✓</div><div class="ttwrap" title="Tap to edit / add description"><div class="tt ${it.done?'done':''}">${escapeHtml(it.text)}${it.desc?'<span class="noteic">📝</span>':''}</div>${it.desc?`<div class="subdesc">${escapeHtml(it.desc)}</div>`:''}</div>${it.due?`<span class="tm">📅 ${fmtDate(it.due)}</span>`:''}<button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ it.done=!it.done; persistCourses(); renderUni(); };
       row.querySelector('.ttwrap').onclick=()=>openSubtaskModal(c,it);
       row.querySelector('.del').onclick=()=>{ c.items=c.items.filter(x=>x.id!==it.id); persistCourses(); renderUni(); };
@@ -727,6 +737,8 @@ function openSubtaskModal(c,it){
   back.innerHTML=`<div class="modal">
     <h3>Edit task</h3>
     <input class="txt" id="stName" value="${escapeHtml(it.text)}" style="margin-bottom:12px;" />
+    <div class="sub" style="margin-bottom:6px;">Due date (optional)</div>
+    <input class="txt" id="stDue" type="date" value="${it.due||''}" style="margin-bottom:12px;" />
     <div class="sub" style="margin-bottom:6px;">Description (optional)</div>
     <textarea class="txt" id="stDesc" rows="4" placeholder="Notes, links, details…">${escapeHtml(it.desc||'')}</textarea>
     <div class="row" style="margin-top:14px; gap:8px;">
@@ -740,6 +752,7 @@ function openSubtaskModal(c,it){
   back.querySelector('#stSave').onclick=()=>{
     const nm=back.querySelector('#stName').value.trim(); if(nm)it.text=nm;
     it.desc=back.querySelector('#stDesc').value.trim();
+    it.due=back.querySelector('#stDue').value||'';
     persistCourses(); back.remove(); renderUni();
   };
   setTimeout(()=>back.querySelector('#stName').focus(),50);
@@ -1387,7 +1400,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.0.6';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.0.7';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
