@@ -170,12 +170,14 @@
   .modal h3{margin:2px 0 12px;}
   .msort{display:flex; align-items:center; gap:6px; margin-bottom:10px;}
   .taskline .tm{font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap;}
-  .mtime,.rowtime{background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:9px; padding:8px; font-size:14px; outline:none; flex:0 0 auto; -webkit-appearance:none; min-width:0;}
-  .rowtime{padding:5px 6px; font-size:12px; color:var(--muted);}
-  .rowtime:focus,.mtime:focus{border-color:var(--accent); color:var(--text);}
   .trow{display:flex; align-items:center; gap:8px; margin:2px 0 4px;}
+  .tsel{background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:9px; padding:8px 6px; font-size:14px; outline:none; -webkit-appearance:none; appearance:none;}
+  .tsel:focus{border-color:var(--accent);}
+  .trow .sub{min-width:40px;}
+  .taskline .edit{background:none; border:none; color:var(--muted); font-size:14px; cursor:pointer; padding:0 2px;}
+  .taskline .tt{cursor:pointer;}
+  .taskline .renameinp{flex:1; font-size:14px; background:var(--panel2); border:1px solid var(--accent); border-radius:6px; padding:4px 6px; color:var(--text); outline:none; min-width:0;}
   .tdash{color:var(--muted); font-weight:600;}
-  .rowtimes{display:flex; align-items:center; gap:4px; margin-left:auto;}
   .pchips{display:flex; gap:8px; margin:6px 0 2px;}
   .pchip{flex:1; text-align:center; padding:8px; border-radius:10px; border:1px solid var(--line); font-size:12px; font-weight:600; cursor:pointer; color:var(--muted);}
   .pchip.sel{color:#fff;}
@@ -393,6 +395,18 @@ function sortTasks(list){
 }
 function fmtTime(t){ if(!t) return ''; const [h,m]=t.split(':').map(Number); const ap=h<12?'AM':'PM'; return `${((h+11)%12)+1}:${String(m).padStart(2,'0')} ${ap}`; }
 function fmtRange(a,b){ if(a&&b) return `${fmtTime(a)} – ${fmtTime(b)}`; if(a) return fmtTime(a); if(b) return `until ${fmtTime(b)}`; return ''; }
+/* Dropdown time picker (predictable on mobile & desktop; no native <input type=time> focus quirks) */
+function timeParts(hhmm){ if(!hhmm) return {h:'', m:0, ap:'AM'}; let [H,M]=hhmm.split(':').map(Number); const ap=H<12?'AM':'PM'; let h=H%12; if(h===0)h=12; return {h, m:M, ap}; }
+function toHHMM(h,m,ap){ if(h===''||h==null) return ''; h=+h; if(ap==='PM'&&h!==12)h+=12; if(ap==='AM'&&h===12)h=0; return pad(h)+':'+pad(+m||0); }
+function timeSelectHTML(prefix,val){
+  const p=timeParts(val);
+  const mins=[]; for(let m=0;m<60;m+=5) mins.push(m); if(val && !mins.includes(p.m)) mins.push(p.m); mins.sort((a,b)=>a-b);
+  const hOpts=['<option value="">–</option>'].concat([...Array(12)].map((_,i)=>{const h=i+1; return `<option value="${h}"${p.h===h?' selected':''}>${h}</option>`;})).join('');
+  const mOpts=mins.map(m=>`<option value="${m}"${p.h!==''&&p.m===m?' selected':''}>${pad(m)}</option>`).join('');
+  const aOpts=['AM','PM'].map(a=>`<option${p.ap===a?' selected':''}>${a}</option>`).join('');
+  return `<select class="tsel" id="th${prefix}">${hOpts}</select><select class="tsel" id="tm${prefix}">${mOpts}</select><select class="tsel" id="tap${prefix}">${aOpts}</select>`;
+}
+function readTimeSelect(root,prefix){ const h=root.querySelector('#th'+prefix).value; const m=root.querySelector('#tm'+prefix).value; const ap=root.querySelector('#tap'+prefix).value; return toHHMM(h,m,ap); }
 let tMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let weekStart = startOfWeek(today);
 let hMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -463,31 +477,32 @@ function openDayModal(k){
     <div class="pchips" id="mPrio">
       ${[0,3,2,1].map(p=>`<div class="pchip ${p===0?'sel':''}" data-p="${p}">${PLABEL[p]}</div>`).join('')}
     </div>
-    <div class="trow">
-      <span class="sub">Time</span>
-      <input type="time" id="mStart" class="mtime" title="Start" />
-      <span class="tdash">–</span>
-      <input type="time" id="mEnd" class="mtime" title="End" />
-    </div>
+    <div class="trow"><span class="sub">Start</span><span id="twrapS"></span></div>
+    <div class="trow"><span class="sub">End</span><span id="twrapE"></span></div>
     <div class="addrow" style="border:none; padding:8px 0 4px;">
       <input id="mInput" placeholder="Add a task…" />
       <button id="mAdd">＋</button>
     </div>
-    <button class="btn ghost" id="mClose" style="width:100%; margin-top:12px;">Done</button>
+    <button class="btn ghost" id="mCancel" style="width:100%; margin-top:8px; display:none;">Cancel edit</button>
+    <button class="btn ghost" id="mClose" style="width:100%; margin-top:8px;">Done</button>
   </div>`;
   document.body.appendChild(back);
-  let prio=0;
-  back.querySelectorAll('.pchip').forEach(c=>c.onclick=()=>{ prio=+c.dataset.p; back.querySelectorAll('.pchip').forEach(x=>x.classList.toggle('sel',x===c)); });
+  let prio=0, editingId=null;
+  const setPrio=(p)=>{ prio=p; back.querySelectorAll('.pchip').forEach(x=>x.classList.toggle('sel',+x.dataset.p===prio)); };
+  const setTimes=(s,e)=>{ back.querySelector('#twrapS').innerHTML=timeSelectHTML('S',s||''); back.querySelector('#twrapE').innerHTML=timeSelectHTML('E',e||''); };
+  const resetForm=()=>{ editingId=null; back.querySelector('#mInput').value=''; setPrio(0); setTimes('',''); back.querySelector('#mAdd').textContent='＋'; back.querySelector('#mCancel').style.display='none'; };
+  const startEdit=(t)=>{ editingId=t.id; back.querySelector('#mInput').value=t.text; setPrio(t.prio||0); setTimes(t.time,t.end); back.querySelector('#mAdd').textContent='✓'; back.querySelector('#mCancel').style.display=''; back.querySelector('#mInput').focus(); };
+  back.querySelectorAll('.pchip').forEach(c=>c.onclick=()=>setPrio(+c.dataset.p));
   const syncSortBtns=()=>back.querySelectorAll('[data-sort]').forEach(b=>b.classList.toggle('active',b.dataset.sort===taskSort));
   back.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{ setTaskSort(b.dataset.sort); syncSortBtns(); draw(); refreshTasks(); });
   const rowFor=(t)=>{
     const row=document.createElement('div'); row.className='taskline'; row.style.borderTop='1px solid var(--line)';
-    row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="priority"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div><span class="rowtimes"><input type="time" class="rowtime rt-s" value="${t.time||''}" title="Start" /><span class="tdash">–</span><input type="time" class="rowtime rt-e" value="${t.end||''}" title="End" /></span><button class="del">✕</button>`;
+    row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to edit">${escapeHtml(t.text)}</div>${(t.time||t.end)?`<span class="tm">${fmtRange(t.time,t.end)}</span>`:''}<button class="edit" title="Edit">✎</button><button class="del" title="Delete">✕</button>`;
     row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); draw(); refreshTasks(); };
     row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); draw(); refreshTasks(); };
-    row.querySelector('.rt-s').onchange=e=>{ t.time=e.target.value||''; persist(); draw(); refreshTasks(); };
-    row.querySelector('.rt-e').onchange=e=>{ t.end=e.target.value||''; persist(); draw(); refreshTasks(); };
-    row.querySelector('.del').onclick=()=>{ trashTask(k,t.id); draw(); refreshTasks(); };
+    row.querySelector('.tt').onclick=()=>startEdit(t);
+    row.querySelector('.edit').onclick=()=>startEdit(t);
+    row.querySelector('.del').onclick=()=>{ if(editingId===t.id) resetForm(); trashTask(k,t.id); draw(); refreshTasks(); };
     return row;
   };
   const draw=()=>{
@@ -505,12 +520,19 @@ function openDayModal(k){
       if(showDone[k]) done.forEach(t=>ml.appendChild(rowFor(t)));
     }
   };
-  const add=()=>{ const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v)return; const s=back.querySelector('#mStart').value||'', e=back.querySelector('#mEnd').value||''; (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:s,end:e}); inp.value=''; persist(); draw(); refreshTasks(); inp.focus(); };
+  const save=()=>{
+    const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v) return;
+    const s=readTimeSelect(back,'S'), e=readTimeSelect(back,'E');
+    if(editingId){ const t=(tasks[k]||[]).find(x=>x.id===editingId); if(t){ t.text=v; t.prio=prio; t.time=s; t.end=e; } }
+    else { (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:s,end:e}); }
+    resetForm(); persist(); draw(); refreshTasks(); inp.focus();
+  };
   syncSortBtns();
+  resetForm();   // initialize priority chips + time dropdowns
   draw();
-  back.querySelector('#mStart').addEventListener('change',()=>{ const e=back.querySelector('#mEnd'); if(!e.value) e.focus(); });   // jump to end after picking start
-  back.querySelector('#mAdd').onclick=add;
-  back.querySelector('#mInput').addEventListener('keydown',e=>{if(e.key==='Enter')add();});
+  back.querySelector('#mAdd').onclick=save;
+  back.querySelector('#mCancel').onclick=resetForm;
+  back.querySelector('#mInput').addEventListener('keydown',e=>{if(e.key==='Enter')save();});
   back.querySelector('#mClose').onclick=()=>back.remove();
   back.onclick=e=>{ if(e.target===back) back.remove(); };
   setTimeout(()=>back.querySelector('#mInput').focus(),50);
@@ -600,9 +622,16 @@ function renderWeek(){
     box.innerHTML=`<div class="wh ${isT?'today':''}"><span class="wd">${DOW[d.getDay()]}</span><span class="wnum">${MON[d.getMonth()].slice(0,3)} ${d.getDate()}</span>${isT?'<span class="spacer"></span><span class="sub" style="color:var(--accent)">Today</span>':''}</div>`;
     const rowFor=(t)=>{
       const row=document.createElement('div'); row.className='taskline';
-      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div>${(t.time||t.end)?`<span class="tm">${fmtRange(t.time,t.end)}</span>`:''}<button class="del">✕</button>`;
+      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to rename">${escapeHtml(t.text)}</div>${(t.time||t.end)?`<span class="tm">${fmtRange(t.time,t.end)}</span>`:''}<button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); renderWeek(); };
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); renderWeek(); };
+      row.querySelector('.tt').onclick=()=>{
+        const tt=row.querySelector('.tt'); const inp=document.createElement('input'); inp.className='renameinp'; inp.value=t.text;
+        tt.replaceWith(inp); inp.focus(); inp.select();
+        const commit=()=>{ const v=inp.value.trim(); if(v&&v!==t.text){ t.text=v; persist(); } renderWeek(); };
+        inp.addEventListener('keydown',e=>{ if(e.key==='Enter') commit(); else if(e.key==='Escape') renderWeek(); });
+        inp.addEventListener('blur', commit);
+      };
       row.querySelector('.del').onclick=()=>{ trashTask(k,t.id); renderWeek(); };
       return row;
     };
