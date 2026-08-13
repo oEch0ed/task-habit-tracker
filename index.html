@@ -197,6 +197,7 @@
   @keyframes spin{to{transform:rotate(360deg);}}
   .hbtn.gon{background:rgba(52,211,153,.4);}
   .hbtn.gon:active{background:rgba(52,211,153,.55);}
+  .hbtn.greauth{background:rgba(224,162,79,.55);}
 </style>
 </head>
 <body>
@@ -829,8 +830,10 @@ function gConnected(){ return !!gapiState.token && Date.now() < gapiState.expiry
 function updateGBtn(){
   const b=document.getElementById('gBtn'); if(!b) return;
   b.classList.toggle('hidden', !gConfigured());
-  b.classList.toggle('gon', gConnected());
-  b.title = gConnected() ? 'Google connected — tap to disconnect' : 'Connect Google Calendar & Tasks';
+  const conn=gConnected(), intent=localStorage.getItem('tk_gconnected')==='1';
+  b.classList.toggle('gon', conn);
+  b.classList.toggle('greauth', !conn && intent);
+  b.title = conn ? 'Google connected — tap to disconnect' : intent ? 'Google session expired — tap to reconnect' : 'Connect Google Calendar & Tasks';
 }
 
 function gInitWhenReady(tries=0){
@@ -842,7 +845,8 @@ function gInitWhenReady(tries=0){
   gapiState.tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_CLIENT_ID, scope: GOOGLE_SCOPES, callback: ()=>{}
   });
-  if(localStorage.getItem('tk_gconnected')==='1') gConnect(true);   // silent reconnect
+  const cached = DB.load('tk_gtoken', null);   // reuse a still-valid token so refreshing doesn't re-prompt
+  if(cached && cached.token && Date.now() < cached.expiry){ gapiState.token=cached.token; gapiState.expiry=cached.expiry; }
   updateGBtn();
 }
 
@@ -853,6 +857,7 @@ function gGetToken(interactive){
       if(resp && resp.error){ reject(resp); return; }
       gapiState.token = resp.access_token;
       gapiState.expiry = Date.now() + ((resp.expires_in||3600)*1000) - 60000;
+      DB.save('tk_gtoken', { token:gapiState.token, expiry:gapiState.expiry });   // survive refreshes
       resolve(resp.access_token);
     };
     tc.error_callback = (err)=>reject(err);
@@ -915,7 +920,8 @@ async function gDelete(type,gid){
   const r=await gApi(url,{method:'DELETE'}); /* 404/410 fine */ return r;
 }
 
-let gPushT=null, gApplying=false;
+let gPushT=null, gApplying=false, gReauthWarned=false;
+function gReauthToast(){ if(gReauthWarned) return; gReauthWarned=true; toast('Google session expired — tap 📅 to reconnect'); }
 function gPushSchedule(){
   if(!gConfigured() || gApplying) return;
   if(!gConnected() && localStorage.getItem('tk_gconnected')!=='1') return;
@@ -923,7 +929,7 @@ function gPushSchedule(){
 }
 async function gPush(){
   if(!gConfigured()) return;
-  if(!gConnected()){ try{ await gGetToken(false); }catch(e){ return; } }
+  if(!gConnected()){ if(localStorage.getItem('tk_gconnected')==='1'){ updateGBtn(); gReauthToast(); } return; }  // don't auto-popup; wait for a tap
   if(gApplying) return; gApplying=true;
   const b=document.getElementById('gBtn'); if(b) b.classList.add('syncing');
   try{
@@ -964,7 +970,7 @@ async function gPush(){
 
 function gConnect(silent){
   gGetToken(!silent).then(async ()=>{
-    localStorage.setItem('tk_gconnected','1'); updateGBtn();
+    localStorage.setItem('tk_gconnected','1'); gReauthWarned=false; updateGBtn();
     if(!silent){ try{ toast(await gVerify()); }catch(e){ console.error(e); toast('Connected, but API check failed'); } }
     gPushSchedule();   // sync existing tasks up to Google
   }).catch(err=>{ console.warn('[Google] connect failed', err); if(!silent) toast('Google connect canceled'); updateGBtn(); });
@@ -973,13 +979,12 @@ function gConnect(silent){
 function gDisconnect(){
   try{ if(gapiState.token) google.accounts.oauth2.revoke(gapiState.token, ()=>{}); }catch(e){}
   gapiState.token=null; gapiState.expiry=0;
-  localStorage.removeItem('tk_gconnected'); updateGBtn(); toast('Disconnected Google');
+  localStorage.removeItem('tk_gconnected'); localStorage.removeItem('tk_gtoken'); updateGBtn(); toast('Disconnected Google');
 }
 
 document.getElementById('gBtn').onclick=()=>{
-  if(gConnected() || localStorage.getItem('tk_gconnected')==='1'){
-    if(confirm('Disconnect Google Calendar & Tasks?')) gDisconnect();
-  } else gConnect(false);
+  if(gConnected()){ if(confirm('Disconnect Google Calendar & Tasks?')) gDisconnect(); }
+  else gConnect(false);   // connect, or reconnect after the token expired
 };
 
 /* init */
