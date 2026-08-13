@@ -774,7 +774,7 @@ function renderHabitMonth(){
   if(todayCol){ scroll.scrollLeft = Math.max(0,(todayCol-4)*34); }
 }
 function addHabit(){ const inp=document.getElementById('newHabit'); const v=inp.value.trim(); if(!v)return; habits.push({id:uid(),name:v,goal:0}); inp.value=''; persist(); renderHabits(); toast('Habit added'); }
-function renderHabits(){ renderDayStrip(); renderSheet(); renderHabitMonth(); }
+function renderHabits(){ const y=window.scrollY; renderDayStrip(); renderSheet(); renderHabitMonth(); window.scrollTo(0,y); }   // keep scroll position; rebuilding the month grid otherwise collapses height and jumps to top
 
 /* =======================================================
    wiring
