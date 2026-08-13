@@ -86,6 +86,7 @@
   .habititem:last-child{border-bottom:none;}
   .check{width:30px; height:30px; border-radius:9px; border:2px solid var(--line); flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-size:17px; cursor:pointer; color:transparent; transition:.12s;}
   .check.on{background:var(--good); border-color:var(--good); color:#052e13; animation:pop .25s;}
+  .check.brk{border-color:var(--brk);}
   .check.brk.on{background:var(--brk); border-color:var(--brk); color:#fff;}
   .habititem .streak.brk{color:var(--brk);}
   .hgroup{font-size:12px; font-weight:700; color:var(--muted); letter-spacing:.3px; margin:14px 2px 2px;}
@@ -698,7 +699,7 @@ function renderSheet(){
     const wk = h.goal ? weekProgress(h.id,d) : null;
     const item=document.createElement('div'); item.className='habititem';
     item.innerHTML=`<div class="check ${brk?'brk ':''}${on?'on':''}">✓</div>
-      <div class="hmeta"><div class="name">${escapeHtml(h.name)}</div>${wk?`<div class="tgt">${wk.done}/${h.goal} this week</div>`:''}</div>
+      <div class="hmeta"><div class="name">${brk?'🚫 ':'🌱 '}${escapeHtml(h.name)}</div>${wk?`<div class="tgt">${wk.done}/${h.goal} this week</div>`:''}</div>
       ${streak>1?`<span class="streak ${brk?'brk':''}">${brk?'🛡️':'🔥'} ${streak}</span>`:''}<button class="del">✕</button>`;
     item.querySelector('.check').onclick=()=>toggleHabit(h.id,hSelected);
     item.querySelector('.del').onclick=()=>{ if(confirm(`Delete habit "${h.name}"?`)){ habits=habits.filter(x=>x.id!==h.id); delete hlog[h.id]; persist(); renderHabits(); } };
@@ -1303,7 +1304,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.0.2';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.0.3';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
