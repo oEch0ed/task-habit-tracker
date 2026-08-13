@@ -878,10 +878,11 @@ const CAL_URL='https://www.googleapis.com/calendar/v3/calendars/primary/events';
 const TASKS_URL='https://www.googleapis.com/tasks/v1/lists/@default/tasks';
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 function taskHash(t,date){ return JSON.stringify([t.text,!!t.done,t.prio||0,t.time||'',t.end||'',date]); }
-/* Tier routing: no time -> Google Task; start only -> Calendar event;
-   start+end -> BOTH (linked event + task, managed together). */
+/* Routing: EVERY task is a Google Task. Any task with a start time also
+   gets a linked Calendar block (start-only = default 1h, start+end = the
+   range). The event + task share a trackId and are managed together. */
 function wantEvent(t){ return !!t.time; }
-function wantTask(t){ return !t.time || !!t.end; }
+function wantTask(t){ return true; }
 function addMins(hhmm,mins){ const [h,m]=hhmm.split(':').map(Number); const d=new Date(2000,0,1,h,m+mins); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function eventBody(t,date){
   let end = t.end && t.end>t.time ? t.end : addMins(t.time,60);
