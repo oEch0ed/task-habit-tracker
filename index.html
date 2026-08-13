@@ -209,6 +209,7 @@
   <div class="hbtns">
     <button class="hbtn hidden" id="gBtn" title="Connect Google Calendar & Tasks">📅</button>
     <button class="hbtn hidden" id="acctBtn" title="Sync / account">☁️</button>
+    <button class="hbtn" id="trashBtn" title="Trash">🗑️</button>
     <button class="hbtn" id="themeBtn" title="Toggle theme">🌙</button>
     <button class="hbtn" id="jumpToday" title="Jump to today">◎</button>
   </div>
@@ -347,7 +348,8 @@ const DB = {
 let tasks  = DB.load('tk_tasks', {});   // { 'YYYY-MM-DD': [ {id,text,done,prio} ] }
 let habits = DB.load('tk_habits', []);  // [ {id,name,goal} ]  goal = times/week (0 = daily/none)
 let hlog   = DB.load('tk_hlog', {});    // { habitId: { 'YYYY-MM-DD': true } }
-const persist = () => { DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog); cloudPush(); gPushSchedule(); };
+let trash  = DB.load('tk_trash', []);   // [ {d:'YYYY-MM-DD', at:ts, t:{...task}} ] — deleted tasks, restorable
+const persist = () => { DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog); DB.save('tk_trash',trash); cloudPush(); gPushSchedule(); };
 const uid = () => Math.random().toString(36).slice(2,9);
 
 /* ---------------- date helpers ---------------- */
@@ -472,7 +474,7 @@ function openDayModal(k){
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); draw(); refreshTasks(); };
       row.querySelector('.rt-s').onchange=e=>{ t.time=e.target.value||''; persist(); draw(); refreshTasks(); };
       row.querySelector('.rt-e').onchange=e=>{ t.end=e.target.value||''; persist(); draw(); refreshTasks(); };
-      row.querySelector('.del').onclick=()=>{ tasks[k]=(tasks[k]||[]).filter(x=>x.id!==t.id); if(!tasks[k].length)delete tasks[k]; persist(); draw(); refreshTasks(); };
+      row.querySelector('.del').onclick=()=>{ trashTask(k,t.id); draw(); refreshTasks(); };
       ml.appendChild(row);
     });
   };
@@ -485,6 +487,48 @@ function openDayModal(k){
   back.querySelector('#mClose').onclick=()=>back.remove();
   back.onclick=e=>{ if(e.target===back) back.remove(); };
   setTimeout(()=>back.querySelector('#mInput').focus(),50);
+}
+
+/* ---- Trash: deleting a task moves it here (and out of Google) instead of vanishing ---- */
+function trashTask(k,id){
+  const arr=tasks[k]||[]; const i=arr.findIndex(x=>x.id===id); if(i<0) return;
+  const [t]=arr.splice(i,1); if(!arr.length) delete tasks[k];
+  trash.unshift({d:k, at:Date.now(), t});
+  persist();   // removes it from `tasks`, so gPush cascades the delete out to Calendar/Tasks
+}
+function restoreTrash(idx){
+  const it=trash[idx]; if(!it) return; const t=it.t;
+  ['gcalId','gtaskId','gHash','gcalPushedAt','gtaskPushedAt'].forEach(f=>delete t[f]);   // remote copies were deleted on trash; re-push fresh
+  (tasks[it.d]=tasks[it.d]||[]).push(t);
+  trash.splice(idx,1);
+  persist(); refreshTasks();
+}
+function purgeTrash(idx){ trash.splice(idx,1); persist(); }
+function openTrashModal(){
+  const back=document.createElement('div'); back.className='modalback';
+  back.innerHTML=`<div class="modal">
+    <h3>Trash</h3>
+    <div id="trList"></div>
+    <button class="btn ghost" id="trEmpty" style="width:100%; margin-top:12px;">Empty trash</button>
+    <button class="btn ghost" id="trClose" style="width:100%; margin-top:8px;">Done</button>
+  </div>`;
+  document.body.appendChild(back);
+  const draw=()=>{
+    const l=back.querySelector('#trList');
+    l.innerHTML = trash.length ? '' : '<div class="empty">Trash is empty.</div>';
+    trash.forEach((it,idx)=>{
+      const t=it.t; const row=document.createElement('div'); row.className='taskline'; row.style.borderTop='1px solid var(--line)';
+      row.innerHTML=`<div class="pf p${t.prio||0}"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div><span class="sub" style="margin-left:auto; padding:0 8px;">${it.d}</span><button class="del rst" title="Restore">↩</button><button class="del pdel" title="Delete forever">✕</button>`;
+      row.querySelector('.rst').onclick=()=>{ restoreTrash(idx); draw(); };
+      row.querySelector('.pdel').onclick=()=>{ purgeTrash(idx); draw(); };
+      l.appendChild(row);
+    });
+    back.querySelector('#trEmpty').style.display = trash.length ? '' : 'none';
+  };
+  draw();
+  back.querySelector('#trEmpty').onclick=()=>{ if(trash.length && confirm(`Permanently delete all ${trash.length} trashed task${trash.length===1?'':'s'}?`)){ trash=[]; persist(); draw(); } };
+  back.querySelector('#trClose').onclick=()=>back.remove();
+  back.onclick=e=>{ if(e.target===back) back.remove(); };
 }
 function renderWeek(){
   const end=addDays(weekStart,6);
@@ -503,7 +547,7 @@ function renderWeek(){
       row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}"></div><div class="tt ${t.done?'done':''}">${escapeHtml(t.text)}</div>${(t.time||t.end)?`<span class="tm">${fmtRange(t.time,t.end)}</span>`:''}<button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); renderWeek(); };
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); renderWeek(); };
-      row.querySelector('.del').onclick=()=>{ tasks[k]=(tasks[k]||[]).filter(x=>x.id!==t.id); if(!tasks[k].length)delete tasks[k]; persist(); renderWeek(); };
+      row.querySelector('.del').onclick=()=>{ trashTask(k,t.id); renderWeek(); };
       box.appendChild(row);
     });
     const ar=document.createElement('div'); ar.className='addrow';
@@ -659,6 +703,7 @@ function setTaskView(v){
 }
 function setTheme(t){ document.documentElement.setAttribute('data-theme',t); localStorage.setItem('tk_theme',t); document.getElementById('themeBtn').textContent = t==='light'?'☀️':'🌙'; document.querySelector('meta[name=theme-color]').setAttribute('content', t==='light'?'#e07a5f':'#1c1a17'); }
 
+document.getElementById('trashBtn').onclick=openTrashModal;
 document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 document.querySelectorAll('[data-taskview]').forEach(b=>b.onclick=()=>setTaskView(b.dataset.taskview));
 document.getElementById('tPrev').onclick=()=>{ tMonth=new Date(tMonth.getFullYear(),tMonth.getMonth()-1,1); renderMonthGrid(); };
@@ -697,14 +742,25 @@ function cloudPush(){
   clearTimeout(pushT);
   pushT=setTimeout(()=>{
     cloud.db.collection('users').doc(cloud.uid).set({
-      tasks, habits, hlog,
+      tasks, habits, hlog, trash,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }).then(()=>setSync('synced')).catch(err=>{ console.error(err); setSync('error'); });
   }, 700);
 }
 
-function setLocalData(t,h,l){
+function setLocalData(t,h,l,tr){
   cloud.applyingRemote=true;
+  trash = tr||[]; DB.save('tk_trash',trash);
+  // A cloud snapshot can echo back a task that was saved just before it received its
+  // Google ids (the push runs after the first cloudPush). Replacing tasks wholesale
+  // would orphan that link and make the next gPull re-import the task as a duplicate.
+  // So if an incoming task carries no Google linkage but the in-memory one does, keep it.
+  const prev={};
+  for(const k in tasks) (tasks[k]||[]).forEach(x=>{ prev[x.id]=x; });
+  const GKEYS=['gcalId','gtaskId','gcalPushedAt','gtaskPushedAt','gHash','gNotesClean'];
+  for(const k in t) (t[k]||[]).forEach(x=>{ const p=prev[x.id];
+    if(p && x.gcalId==null && x.gtaskId==null && (p.gcalId!=null||p.gtaskId!=null))
+      GKEYS.forEach(f=>{ if(p[f]!=null) x[f]=p[f]; }); });
   tasks=t; habits=h; hlog=l;
   DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog);
   cloud.applyingRemote=false;
@@ -723,7 +779,7 @@ function cloudSubscribe(){
     }
     if(snap.metadata.hasPendingWrites) return;    // ignore the echo of our own write
     const data=snap.data()||{};
-    setLocalData(data.tasks||{}, data.habits||[], data.hlog||{});
+    setLocalData(data.tasks||{}, data.habits||[], data.hlog||{}, data.trash||[]);
     localStorage.setItem('tk_owner', cloud.uid);
     setSync('synced');
   }, err=>{ console.error(err); setSync('error'); });
@@ -997,6 +1053,7 @@ function importGTask(gt){
 }
 async function gPull(){
   const since = localStorage.getItem('tk_gpull');
+  const firstSync = !since;   // first connect: establish a baseline, don't import pre-existing Google Tasks
   const nowISO = new Date().toISOString();
   const byCal={}, byTask={};
   for(const k in tasks) (tasks[k]||[]).forEach(t=>{ if(t.gcalId)byCal[t.gcalId]=t; if(t.gtaskId)byTask[t.gtaskId]=t; });
@@ -1022,7 +1079,7 @@ async function gPull(){
       if(t){
         if(gt.deleted){ removeLocal(t); changed=true; return; }
         if(!localDirty(t) && stamp(gt) > (t.gtaskPushedAt||0)){ applyGTask(t,gt); changed=true; }
-      } else if(!gt.deleted){ importGTask(gt); changed=true; }
+      } else if(!gt.deleted && !firstSync){ importGTask(gt); changed=true; }   // only import tasks created in Google after we connected
     });
   }catch(e){ console.warn('[gPull tasks]',e); }
   localStorage.setItem('tk_gpull', nowISO);
