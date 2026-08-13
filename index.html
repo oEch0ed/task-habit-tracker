@@ -397,7 +397,7 @@ let hlog   = DB.load('tk_hlog', {});    // { habitId: { 'YYYY-MM-DD': true } }
 let trash  = DB.load('tk_trash', []);   // [ {d:'YYYY-MM-DD', at:ts, t:{...task}} ] — deleted tasks, restorable
 let courses = DB.load('tk_courses', []);   // [ {id, name, items:[{id,text,done}]} ] — uni courses & their subtasks
 const persist = () => { DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog); DB.save('tk_trash',trash); DB.save('tk_courses',courses); cloudPush(); gPushSchedule(); };
-function persistCourses(){ DB.save('tk_courses',courses); cloudPush(); }   // courses don't touch Google, so skip gPushSchedule
+function persistCourses(){ DB.save('tk_courses',courses); cloudPush(); gPushSchedule(); }   // gPush also syncs due-dated uni subtasks to Google Tasks
 const uid = () => Math.random().toString(36).slice(2,9);
 
 /* ---------------- date helpers ---------------- */
@@ -968,7 +968,11 @@ function cloudPush(){
 function setLocalData(t,h,l,tr,co){
   cloud.applyingRemote=true;
   trash = tr||[]; DB.save('tk_trash',trash);
-  courses = co||[]; DB.save('tk_courses',courses);
+  // Preserve a uni subtask's Google link if a stale cloud echo lacks it (same race as tasks below).
+  const uprev={}; courses.forEach(c=>(c.items||[]).forEach(x=>{ uprev[x.id]=x; }));
+  co=co||[]; const UKEYS=['gtaskId','gtaskPushedAt','gHash'];
+  co.forEach(c=>(c.items||[]).forEach(x=>{ const p=uprev[x.id]; if(p && x.gtaskId==null && p.gtaskId!=null) UKEYS.forEach(f=>{ if(p[f]!=null) x[f]=p[f]; }); }));
+  courses = co; DB.save('tk_courses',courses);
   // A cloud snapshot can echo back a task that was saved just before it received its
   // Google ids (the push runs after the first cloudPush). Replacing tasks wholesale
   // would orphan that link and make the next gPull re-import the task as a duplicate.
@@ -1238,6 +1242,7 @@ const CAL_URL='https://www.googleapis.com/calendar/v3/calendars/primary/events';
 const TASKS_URL='https://www.googleapis.com/tasks/v1/lists/@default/tasks';
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 function taskHash(t,date){ return JSON.stringify([t.text,!!t.done,t.prio||0,t.time||'',t.end||'',date]); }
+function uniHash(it){ return JSON.stringify([it.text,!!it.done,it.due||'']); }   // uni subtask -> Google Task (date only)
 /* Routing: EVERY task is a Google Task. Any task with a start time also
    gets a linked Calendar block (start-only = default 1h, start+end = the
    range). The event + task share a trackId and are managed together. */
@@ -1314,7 +1319,23 @@ async function gPush(){
       delete known[id];
     } }
     DB.save('tk_gknown', known);
-    if(changed){ DB.save('tk_tasks',tasks); cloudPush(); }
+    // Uni subtasks with a due date -> Google Tasks (date only; shows in Google Calendar's task overlay)
+    const uniCur={};
+    courses.forEach(c=>(c.items||[]).forEach(it=>{ if(it.due) uniCur[it.id]={it}; }));
+    const uknown = DB.load('tk_gknownuni', {});   // itemId -> gtaskId
+    for(const id in uniCur){
+      const {it}=uniCur[id]; const hash=uniHash(it);
+      if(!it.gtaskId){ const res=await gCreate('task',{text:it.text,done:it.done},it.due); it.gtaskId=res.id; it.gtaskPushedAt=stamp(res); changed=true; }
+      else if(it.gHash!==hash){ const res=await gUpdate('task',it.gtaskId,{text:it.text,done:it.done},it.due); it.gtaskId=res.id; it.gtaskPushedAt=stamp(res); changed=true; }
+      it.gHash=hash; uknown[id]=it.gtaskId||null;
+    }
+    for(const id in uknown){ if(!uniCur[id]){   // due removed or subtask deleted -> drop the Google task
+      try{ if(uknown[id]) await gDelete('task',uknown[id]); }catch(e2){}
+      courses.forEach(c=>(c.items||[]).forEach(it=>{ if(it.id===id){ it.gtaskId=null; delete it.gHash; delete it.gtaskPushedAt; } }));
+      delete uknown[id]; changed=true;
+    } }
+    DB.save('tk_gknownuni', uknown);
+    if(changed){ DB.save('tk_tasks',tasks); DB.save('tk_courses',courses); cloudPush(); }
   }catch(e){ console.error('[Google push]', e); toast('Google sync error'); }
   finally{ gApplying=false; if(b) b.classList.remove('syncing'); }
 }
@@ -1347,12 +1368,21 @@ function importGTask(gt){
   t.gtaskPushedAt=stamp(gt); t.gHash=taskHash(t,nd);
   (tasks[nd]=tasks[nd]||[]).push(t);
 }
+function uniDirty(it){ return it.gHash !== uniHash(it); }
+function applyUniGTask(it,gt){
+  if(gt.title!=null) it.text=gt.title;
+  it.done = gt.status==='completed';
+  if(gt.due) it.due = gt.due.slice(0,10);
+  it.gtaskPushedAt=stamp(gt); it.gHash=uniHash(it);
+}
+function removeUniItem(c,it){ c.items=(c.items||[]).filter(x=>x!==it); }
 async function gPull(){
   const since = localStorage.getItem('tk_gpull');
   const firstSync = !since;   // first connect: establish a baseline, don't import pre-existing Google Tasks
   const nowISO = new Date().toISOString();
-  const byTask={};
+  const byTask={}, byUni={};
   for(const k in tasks) (tasks[k]||[]).forEach(t=>{ if(t.gtaskId)byTask[t.gtaskId]=t; });
+  courses.forEach(c=>(c.items||[]).forEach(it=>{ if(it.gtaskId)byUni[it.gtaskId]={c,it}; }));
   let changed=false;
   // Google Tasks — edits/completions/deletions; import new ones created in Google
   try{
@@ -1360,15 +1390,18 @@ async function gPull(){
     if(since) u+='&updatedMin='+encodeURIComponent(since);
     const data=await (await gApi(u)).json();
     (data.items||[]).forEach(gt=>{
-      const t=byTask[gt.id];
+      const t=byTask[gt.id], un=byUni[gt.id];
       if(t){
         if(gt.deleted){ removeLocal(t); changed=true; return; }
         if(!localDirty(t) && stamp(gt) > (t.gtaskPushedAt||0)){ applyGTask(t,gt); changed=true; }
+      } else if(un){   // a uni subtask we pushed
+        if(gt.deleted){ removeUniItem(un.c,un.it); changed=true; return; }
+        if(!uniDirty(un.it) && stamp(gt) > (un.it.gtaskPushedAt||0)){ applyUniGTask(un.it,gt); changed=true; }
       } else if(!gt.deleted && !firstSync){ importGTask(gt); changed=true; }   // only import tasks created in Google after we connected
     });
   }catch(e){ console.warn('[gPull tasks]',e); }
   localStorage.setItem('tk_gpull', nowISO);
-  if(changed){ DB.save('tk_tasks',tasks); cloudPush(); rerenderAll(); }
+  if(changed){ DB.save('tk_tasks',tasks); DB.save('tk_courses',courses); cloudPush(); rerenderAll(); }
   return changed;
 }
 async function gSync(){
@@ -1400,7 +1433,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.0.7';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.0.8';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
