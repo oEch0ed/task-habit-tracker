@@ -69,6 +69,8 @@
   input.txt:focus, textarea.txt:focus{border-color:var(--accent);}
   .ttwrap{flex:1; min-width:0; cursor:pointer;}
   .subdesc{font-size:12px; color:var(--muted); margin-top:2px; line-height:1.35; white-space:pre-wrap; word-break:break-word;}
+  .taskline .subdesc{flex-basis:100%; margin-top:-2px;}
+  .rdesc{cursor:pointer;}
   .noteic{font-size:11px; opacity:.7; margin-left:4px;}
 
   /* HABITS */
@@ -510,6 +512,7 @@ function openDayModal(k){
       <input id="mInput" placeholder="Add a task…" />
       <button id="mAdd">＋</button>
     </div>
+    <textarea class="txt" id="mDesc" rows="2" placeholder="Description (optional)"></textarea>
     <button class="btn ghost" id="mCancel" style="width:100%; margin-top:8px; display:none;">Cancel edit</button>
     <button class="btn ghost" id="mClose" style="width:100%; margin-top:8px;">Done</button>
   </div>`;
@@ -517,17 +520,18 @@ function openDayModal(k){
   let prio=0, editingId=null;
   const setPrio=(p)=>{ prio=p; back.querySelectorAll('.pchip').forEach(x=>x.classList.toggle('sel',+x.dataset.p===prio)); };
   const setTime=(s)=>{ back.querySelector('#twrapS').innerHTML=timeSelectHTML('S',s||''); };
-  const resetForm=()=>{ editingId=null; back.querySelector('#mInput').value=''; setPrio(0); setTime(''); back.querySelector('#mAdd').textContent='＋'; back.querySelector('#mCancel').style.display='none'; };
-  const startEdit=(t)=>{ editingId=t.id; back.querySelector('#mInput').value=t.text; setPrio(t.prio||0); setTime(t.time); back.querySelector('#mAdd').textContent='✓'; back.querySelector('#mCancel').style.display=''; back.querySelector('#mInput').focus(); };
+  const resetForm=()=>{ editingId=null; back.querySelector('#mInput').value=''; back.querySelector('#mDesc').value=''; setPrio(0); setTime(''); back.querySelector('#mAdd').textContent='＋'; back.querySelector('#mCancel').style.display='none'; };
+  const startEdit=(t)=>{ editingId=t.id; back.querySelector('#mInput').value=t.text; back.querySelector('#mDesc').value=t.desc||''; setPrio(t.prio||0); setTime(t.time); back.querySelector('#mAdd').textContent='✓'; back.querySelector('#mCancel').style.display=''; back.querySelector('#mInput').focus(); };
   back.querySelectorAll('.pchip').forEach(c=>c.onclick=()=>setPrio(+c.dataset.p));
   const syncSortBtns=()=>back.querySelectorAll('[data-sort]').forEach(b=>b.classList.toggle('active',b.dataset.sort===taskSort));
   back.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{ setTaskSort(b.dataset.sort); syncSortBtns(); draw(); refreshTasks(); });
   const rowFor=(t)=>{
     const row=document.createElement('div'); row.className='taskline'; row.style.borderTop='1px solid var(--line)';
-    row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to edit">${escapeHtml(t.text)}</div>${t.time?`<span class="tm">${fmtTime(t.time)}</span>`:''}<button class="edit" title="Edit">✎</button><button class="del" title="Delete">✕</button>`;
+    row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to edit">${escapeHtml(t.text)}${t.desc?'<span class="noteic">📝</span>':''}</div>${t.time?`<span class="tm">${fmtTime(t.time)}</span>`:''}<button class="edit" title="Edit">✎</button><button class="del" title="Delete">✕</button>${t.desc?`<div class="subdesc rdesc">${escapeHtml(t.desc)}</div>`:''}`;
     row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); draw(); refreshTasks(); };
     row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); draw(); refreshTasks(); };
     row.querySelector('.tt').onclick=()=>startEdit(t);
+    const rd=row.querySelector('.rdesc'); if(rd) rd.onclick=()=>startEdit(t);
     row.querySelector('.edit').onclick=()=>startEdit(t);
     row.querySelector('.del').onclick=()=>{ if(editingId===t.id) resetForm(); trashTask(k,t.id); draw(); refreshTasks(); };
     return row;
@@ -549,9 +553,9 @@ function openDayModal(k){
   };
   const save=()=>{
     const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v) return;
-    const s=readTimeSelect(back,'S');
-    if(editingId){ const t=(tasks[k]||[]).find(x=>x.id===editingId); if(t){ t.text=v; t.prio=prio; t.time=s; t.end=''; } }   // start-time only; clear any legacy end
-    else { (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:s,end:''}); }
+    const s=readTimeSelect(back,'S'); const desc=back.querySelector('#mDesc').value.trim();
+    if(editingId){ const t=(tasks[k]||[]).find(x=>x.id===editingId); if(t){ t.text=v; t.prio=prio; t.time=s; t.end=''; t.desc=desc; } }   // start-time only; clear any legacy end
+    else { (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:s,end:'',desc}); }
     resetForm(); persist(); draw(); refreshTasks(); inp.focus();
   };
   syncSortBtns();
@@ -649,7 +653,7 @@ function renderWeek(){
     box.innerHTML=`<div class="wh ${isT?'today':''}"><span class="wd">${DOW[d.getDay()]}</span><span class="wnum">${MON[d.getMonth()].slice(0,3)} ${d.getDate()}</span>${isT?'<span class="spacer"></span><span class="sub" style="color:var(--accent)">Today</span>':''}</div>`;
     const rowFor=(t)=>{
       const row=document.createElement('div'); row.className='taskline';
-      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to rename">${escapeHtml(t.text)}</div>${t.time?`<span class="tm">${fmtTime(t.time)}</span>`:''}<button class="del">✕</button>`;
+      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to rename">${escapeHtml(t.text)}${t.desc?'<span class="noteic">📝</span>':''}</div>${t.time?`<span class="tm">${fmtTime(t.time)}</span>`:''}<button class="del">✕</button>${t.desc?`<div class="subdesc">${escapeHtml(t.desc)}</div>`:''}`;
       row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); renderWeek(); };
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); renderWeek(); };
       row.querySelector('.tt').onclick=()=>{
@@ -1383,7 +1387,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.0.5';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.0.6';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
