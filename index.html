@@ -455,7 +455,7 @@ function renderMonthGrid(){
     const SHOW=4;
     let inner=`<div class="cn">${d.getDate()}</div>`;
     if(list.length){ inner=`<span class="cnt">${active.length||'✓'}</span>`+inner; }
-    inner += active.slice(0,SHOW).map(t=>{ const rng=(t.time||t.end)?`<span class="mt">${t.time||''}${t.end?'–'+t.end:''}</span> `:''; return `<div class="mini p${t.prio||0}">${rng}${escapeHtml(t.text)}</div>`; }).join('');
+    inner += active.slice(0,SHOW).map(t=>{ const rng=t.time?`<span class="mt">${t.time}</span> `:''; return `<div class="mini p${t.prio||0}">${rng}${escapeHtml(t.text)}</div>`; }).join('');
     if(active.length>SHOW) inner+=`<div class="mini">+${active.length-SHOW} more</div>`;
     cell.innerHTML=inner;
     cell.onclick=()=>openDayModal(k);
@@ -477,8 +477,7 @@ function openDayModal(k){
     <div class="pchips" id="mPrio">
       ${[0,3,2,1].map(p=>`<div class="pchip ${p===0?'sel':''}" data-p="${p}">${PLABEL[p]}</div>`).join('')}
     </div>
-    <div class="trow"><span class="sub">Start</span><span id="twrapS"></span></div>
-    <div class="trow"><span class="sub">End</span><span id="twrapE"></span></div>
+    <div class="trow"><span class="sub">Time</span><span id="twrapS"></span></div>
     <div class="addrow" style="border:none; padding:8px 0 4px;">
       <input id="mInput" placeholder="Add a task…" />
       <button id="mAdd">＋</button>
@@ -489,15 +488,15 @@ function openDayModal(k){
   document.body.appendChild(back);
   let prio=0, editingId=null;
   const setPrio=(p)=>{ prio=p; back.querySelectorAll('.pchip').forEach(x=>x.classList.toggle('sel',+x.dataset.p===prio)); };
-  const setTimes=(s,e)=>{ back.querySelector('#twrapS').innerHTML=timeSelectHTML('S',s||''); back.querySelector('#twrapE').innerHTML=timeSelectHTML('E',e||''); };
-  const resetForm=()=>{ editingId=null; back.querySelector('#mInput').value=''; setPrio(0); setTimes('',''); back.querySelector('#mAdd').textContent='＋'; back.querySelector('#mCancel').style.display='none'; };
-  const startEdit=(t)=>{ editingId=t.id; back.querySelector('#mInput').value=t.text; setPrio(t.prio||0); setTimes(t.time,t.end); back.querySelector('#mAdd').textContent='✓'; back.querySelector('#mCancel').style.display=''; back.querySelector('#mInput').focus(); };
+  const setTime=(s)=>{ back.querySelector('#twrapS').innerHTML=timeSelectHTML('S',s||''); };
+  const resetForm=()=>{ editingId=null; back.querySelector('#mInput').value=''; setPrio(0); setTime(''); back.querySelector('#mAdd').textContent='＋'; back.querySelector('#mCancel').style.display='none'; };
+  const startEdit=(t)=>{ editingId=t.id; back.querySelector('#mInput').value=t.text; setPrio(t.prio||0); setTime(t.time); back.querySelector('#mAdd').textContent='✓'; back.querySelector('#mCancel').style.display=''; back.querySelector('#mInput').focus(); };
   back.querySelectorAll('.pchip').forEach(c=>c.onclick=()=>setPrio(+c.dataset.p));
   const syncSortBtns=()=>back.querySelectorAll('[data-sort]').forEach(b=>b.classList.toggle('active',b.dataset.sort===taskSort));
   back.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{ setTaskSort(b.dataset.sort); syncSortBtns(); draw(); refreshTasks(); });
   const rowFor=(t)=>{
     const row=document.createElement('div'); row.className='taskline'; row.style.borderTop='1px solid var(--line)';
-    row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to edit">${escapeHtml(t.text)}</div>${(t.time||t.end)?`<span class="tm">${fmtRange(t.time,t.end)}</span>`:''}<button class="edit" title="Edit">✎</button><button class="del" title="Delete">✕</button>`;
+    row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to edit">${escapeHtml(t.text)}</div>${t.time?`<span class="tm">${fmtTime(t.time)}</span>`:''}<button class="edit" title="Edit">✎</button><button class="del" title="Delete">✕</button>`;
     row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); draw(); refreshTasks(); };
     row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); draw(); refreshTasks(); };
     row.querySelector('.tt').onclick=()=>startEdit(t);
@@ -522,9 +521,9 @@ function openDayModal(k){
   };
   const save=()=>{
     const inp=back.querySelector('#mInput'); const v=inp.value.trim(); if(!v) return;
-    const s=readTimeSelect(back,'S'), e=readTimeSelect(back,'E');
-    if(editingId){ const t=(tasks[k]||[]).find(x=>x.id===editingId); if(t){ t.text=v; t.prio=prio; t.time=s; t.end=e; } }
-    else { (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:s,end:e}); }
+    const s=readTimeSelect(back,'S');
+    if(editingId){ const t=(tasks[k]||[]).find(x=>x.id===editingId); if(t){ t.text=v; t.prio=prio; t.time=s; t.end=''; } }   // start-time only; clear any legacy end
+    else { (tasks[k]=tasks[k]||[]).push({id:uid(),text:v,done:false,prio,time:s,end:''}); }
     resetForm(); persist(); draw(); refreshTasks(); inp.focus();
   };
   syncSortBtns();
@@ -622,7 +621,7 @@ function renderWeek(){
     box.innerHTML=`<div class="wh ${isT?'today':''}"><span class="wd">${DOW[d.getDay()]}</span><span class="wnum">${MON[d.getMonth()].slice(0,3)} ${d.getDate()}</span>${isT?'<span class="spacer"></span><span class="sub" style="color:var(--accent)">Today</span>':''}</div>`;
     const rowFor=(t)=>{
       const row=document.createElement('div'); row.className='taskline';
-      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to rename">${escapeHtml(t.text)}</div>${(t.time||t.end)?`<span class="tm">${fmtRange(t.time,t.end)}</span>`:''}<button class="del">✕</button>`;
+      row.innerHTML=`<div class="tc ${t.done?'on':''}">✓</div><div class="pf p${t.prio||0}" title="Tap to change priority"></div><div class="tt ${t.done?'done':''}" title="Tap to rename">${escapeHtml(t.text)}</div>${t.time?`<span class="tm">${fmtTime(t.time)}</span>`:''}<button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ t.done=!t.done; persist(); renderWeek(); };
       row.querySelector('.pf').onclick=()=>{ t.prio=((t.prio||0)+1)%4; persist(); renderWeek(); };
       row.querySelector('.tt').onclick=()=>{
@@ -1117,7 +1116,7 @@ function taskHash(t,date){ return JSON.stringify([t.text,!!t.done,t.prio||0,t.ti
 /* Routing: EVERY task is a Google Task. Any task with a start time also
    gets a linked Calendar block (start-only = default 1h, start+end = the
    range). The event + task share a trackId and are managed together. */
-function wantEvent(t){ return !!t.time; }
+function wantEvent(t){ return false; }   // Calendar disabled — Google Tasks only. Existing events cascade-delete on next push.
 function wantTask(t){ return true; }
 function addMins(hhmm,mins){ const [h,m]=hhmm.split(':').map(Number); const d=new Date(2000,0,1,h,m+mins); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function eventBody(t,date){
@@ -1227,20 +1226,9 @@ async function gPull(){
   const since = localStorage.getItem('tk_gpull');
   const firstSync = !since;   // first connect: establish a baseline, don't import pre-existing Google Tasks
   const nowISO = new Date().toISOString();
-  const byCal={}, byTask={};
-  for(const k in tasks) (tasks[k]||[]).forEach(t=>{ if(t.gcalId)byCal[t.gcalId]=t; if(t.gtaskId)byTask[t.gtaskId]=t; });
+  const byTask={};
+  for(const k in tasks) (tasks[k]||[]).forEach(t=>{ if(t.gtaskId)byTask[t.gtaskId]=t; });
   let changed=false;
-  // Calendar — only our own events (trackApp marker), including deletions
-  try{
-    let u=CAL_URL+'?privateExtendedProperty='+encodeURIComponent('trackApp=1')+'&showDeleted=true&singleEvents=true&maxResults=2500';
-    if(since) u+='&updatedMin='+encodeURIComponent(since);
-    const data=await (await gApi(u)).json();
-    (data.items||[]).forEach(ev=>{
-      const t=byCal[ev.id]; if(!t) return;
-      if(ev.status==='cancelled'){ removeLocal(t); changed=true; return; }   // deleted in Google
-      if(!localDirty(t) && stamp(ev) > (t.gcalPushedAt||0)){ applyEvent(t,ev); changed=true; }  // local wins on conflict
-    });
-  }catch(e){ console.warn('[gPull cal]',e); }
   // Google Tasks — edits/completions/deletions; import new ones created in Google
   try{
     let u=TASKS_URL+'?showDeleted=true&showHidden=true&maxResults=100';
