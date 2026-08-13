@@ -164,7 +164,9 @@
   .banner button{margin-left:auto;}
 
   .modalback{position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:30; display:flex; align-items:flex-end; justify-content:center; animation:fade .2s;}
-  .modal{background:var(--panel); width:100%; max-width:520px; border-radius:18px 18px 0 0; padding:16px 16px calc(20px + env(safe-area-inset-bottom)); border-top:1px solid var(--line);}
+  .modal{background:var(--panel); width:100%; max-width:520px; border-radius:18px 18px 0 0; padding:16px 16px calc(20px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); max-height:90vh; display:flex; flex-direction:column;}
+  .modal>*{flex-shrink:0;}
+  .modal #mList, .modal #trList, .modal #cmpList{overflow-y:auto; flex-shrink:1; min-height:0;}
   .modal h3{margin:2px 0 12px;}
   .msort{display:flex; align-items:center; gap:6px; margin-bottom:10px;}
   .taskline .tm{font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap;}
@@ -209,6 +211,7 @@
   <div class="hbtns">
     <button class="hbtn hidden" id="gBtn" title="Connect Google Calendar & Tasks">📅</button>
     <button class="hbtn hidden" id="acctBtn" title="Sync / account">☁️</button>
+    <button class="hbtn" id="doneBtn" title="Completed tasks">✅</button>
     <button class="hbtn" id="trashBtn" title="Trash">🗑️</button>
     <button class="hbtn" id="themeBtn" title="Toggle theme">🌙</button>
     <button class="hbtn" id="jumpToday" title="Jump to today">◎</button>
@@ -530,6 +533,34 @@ function openTrashModal(){
   back.querySelector('#trClose').onclick=()=>back.remove();
   back.onclick=e=>{ if(e.target===back) back.remove(); };
 }
+
+/* ---- Completed: every done task across all days, to review / reopen / delete ---- */
+function openCompletedModal(){
+  const back=document.createElement('div'); back.className='modalback';
+  back.innerHTML=`<div class="modal">
+    <h3>Completed</h3>
+    <div id="cmpList"></div>
+    <button class="btn ghost" id="cmpClose" style="width:100%; margin-top:12px;">Done</button>
+  </div>`;
+  document.body.appendChild(back);
+  const draw=()=>{
+    const items=[];
+    for(const k in tasks) (tasks[k]||[]).forEach(t=>{ if(t.done) items.push({d:k,t}); });
+    items.sort((a,b)=> a.d<b.d?1 : a.d>b.d?-1 : 0);   // most recently dated first
+    const l=back.querySelector('#cmpList');
+    l.innerHTML = items.length ? '' : '<div class="empty">No completed tasks yet.</div>';
+    items.forEach(({d,t})=>{
+      const row=document.createElement('div'); row.className='taskline'; row.style.borderTop='1px solid var(--line)';
+      row.innerHTML=`<div class="tc on" title="Mark not done">✓</div><div class="pf p${t.prio||0}"></div><div class="tt done">${escapeHtml(t.text)}</div><span class="sub" style="margin-left:auto; padding:0 8px;">${d}</span><button class="del" title="Delete">✕</button>`;
+      row.querySelector('.tc').onclick=()=>{ t.done=false; persist(); refreshTasks(); draw(); };   // reopen
+      row.querySelector('.del').onclick=()=>{ trashTask(d,t.id); refreshTasks(); draw(); };
+      l.appendChild(row);
+    });
+  };
+  draw();
+  back.querySelector('#cmpClose').onclick=()=>back.remove();
+  back.onclick=e=>{ if(e.target===back) back.remove(); };
+}
 function renderWeek(){
   const end=addDays(weekStart,6);
   const same=weekStart.getMonth()===end.getMonth();
@@ -703,6 +734,7 @@ function setTaskView(v){
 }
 function setTheme(t){ document.documentElement.setAttribute('data-theme',t); localStorage.setItem('tk_theme',t); document.getElementById('themeBtn').textContent = t==='light'?'☀️':'🌙'; document.querySelector('meta[name=theme-color]').setAttribute('content', t==='light'?'#e07a5f':'#1c1a17'); }
 
+document.getElementById('doneBtn').onclick=openCompletedModal;
 document.getElementById('trashBtn').onclick=openTrashModal;
 document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 document.querySelectorAll('[data-taskview]').forEach(b=>b.onclick=()=>setTaskView(b.dataset.taskview));
