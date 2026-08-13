@@ -877,8 +877,11 @@ async function gVerify(){
 const CAL_URL='https://www.googleapis.com/calendar/v3/calendars/primary/events';
 const TASKS_URL='https://www.googleapis.com/tasks/v1/lists/@default/tasks';
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
-function taskType(t){ return t.time ? 'event' : 'task'; }         // timed -> calendar event, else Google task
-function taskHash(t,date){ return JSON.stringify([t.text,!!t.done,t.prio||0,t.time||'',t.end||'',date,taskType(t)]); }
+function taskHash(t,date){ return JSON.stringify([t.text,!!t.done,t.prio||0,t.time||'',t.end||'',date]); }
+/* Tier routing: no time -> Google Task; start only -> Calendar event;
+   start+end -> BOTH (linked event + task, managed together). */
+function wantEvent(t){ return !!t.time; }
+function wantTask(t){ return !t.time || !!t.end; }
 function addMins(hhmm,mins){ const [h,m]=hhmm.split(':').map(Number); const d=new Date(2000,0,1,h,m+mins); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function eventBody(t,date){
   let end = t.end && t.end>t.time ? t.end : addMins(t.time,60);
@@ -922,16 +925,32 @@ async function gPush(){
   try{
     const cur={};
     for(const k in tasks){ (tasks[k]||[]).forEach(t=>{ cur[t.id]={t,date:k}; }); }
-    const known = DB.load('tk_gknown', {});   // trackId -> {gid,gtype}, survives local deletes
+    const known = DB.load('tk_gknown', {});   // trackId -> {gcalId,gtaskId}, survives local deletes
     let changed=false;
     for(const id in cur){
-      const {t,date}=cur[id]; const type=taskType(t); const hash=taskHash(t,date);
-      if(!t.gid){ t.gid=await gCreate(type,t,date); t.gtype=type; t.gHash=hash; changed=true; }
-      else if(t.gtype!==type){ await gDelete(t.gtype,t.gid); t.gid=await gCreate(type,t,date); t.gtype=type; t.gHash=hash; changed=true; }
-      else if(t.gHash!==hash){ t.gid=await gUpdate(type,t.gid,t,date); t.gHash=hash; changed=true; }
-      known[id]={gid:t.gid,gtype:t.gtype};
+      const {t,date}=cur[id];
+      if(t.gid){ if(t.gtype==='event') t.gcalId=t.gid; else t.gtaskId=t.gid; delete t.gid; delete t.gtype; changed=true; } // migrate Phase-2 single-id
+      const hash=taskHash(t,date); const wantE=wantEvent(t), wantT=wantTask(t);
+      // Calendar-event channel
+      if(wantE){
+        if(!t.gcalId){ t.gcalId=await gCreate('event',t,date); changed=true; }
+        else if(t.gHash!==hash){ t.gcalId=await gUpdate('event',t.gcalId,t,date); changed=true; }
+      } else if(t.gcalId){ await gDelete('event',t.gcalId); t.gcalId=null; changed=true; }
+      // Google-Tasks channel
+      if(wantT){
+        if(!t.gtaskId){ t.gtaskId=await gCreate('task',t,date); changed=true; }
+        else if(t.gHash!==hash){ t.gtaskId=await gUpdate('task',t.gtaskId,t,date); changed=true; }
+      } else if(t.gtaskId){ await gDelete('task',t.gtaskId); t.gtaskId=null; changed=true; }
+      t.gHash=hash;
+      known[id]={gcalId:t.gcalId||null, gtaskId:t.gtaskId||null};
     }
-    for(const id in known){ if(!cur[id]){ try{ await gDelete(known[id].gtype,known[id].gid); }catch(e){} delete known[id]; } }
+    for(const id in known){ if(!cur[id]){
+      const e=known[id];
+      const gcalId=e.gcalId||(e.gtype==='event'?e.gid:null);   // tolerate old format
+      const gtaskId=e.gtaskId||(e.gtype==='task'?e.gid:null);
+      try{ if(gcalId) await gDelete('event',gcalId); if(gtaskId) await gDelete('task',gtaskId); }catch(e2){}
+      delete known[id];
+    } }
     DB.save('tk_gknown', known);
     if(changed){ DB.save('tk_tasks',tasks); cloudPush(); }
   }catch(e){ console.error('[Google push]', e); toast('Google sync error'); }
