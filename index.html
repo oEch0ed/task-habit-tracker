@@ -9,14 +9,14 @@
   :root{
     --bg:#1c1a17; --panel:#262320; --panel2:#312d28; --line:#3f3a34;
     --text:#ece4d8; --muted:#a89d8d; --accent:#e07a5f; --accent2:#efa765;
-    --good:#5fae6e; --warn:#e0a24f; --danger:#e0654f;
+    --good:#5fae6e; --warn:#e0a24f; --danger:#e0654f; --brk:#7c8fe0;
     --p-high:#e0654f; --p-med:#e0a24f; --p-low:#6fb0c9;
     --radius:14px; --shadow:0 6px 20px rgba(0,0,0,.35);
   }
   html[data-theme="light"]{
     --bg:#f6f1e9; --panel:#fffcf7; --panel2:#efe7db; --line:#e6ddce;
     --text:#403a31; --muted:#8b8073; --accent:#e07a5f; --accent2:#efa765;
-    --good:#4f9e5e; --warn:#cf9038; --danger:#d1543f;
+    --good:#4f9e5e; --warn:#cf9038; --danger:#d1543f; --brk:#5566cc;
     --p-high:#d1543f; --p-med:#cf9038; --p-low:#4f92a8;
     --shadow:0 8px 24px rgba(120,90,60,.12);
   }
@@ -86,6 +86,11 @@
   .habititem:last-child{border-bottom:none;}
   .check{width:30px; height:30px; border-radius:9px; border:2px solid var(--line); flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-size:17px; cursor:pointer; color:transparent; transition:.12s;}
   .check.on{background:var(--good); border-color:var(--good); color:#052e13; animation:pop .25s;}
+  .check.brk.on{background:var(--brk); border-color:var(--brk); color:#fff;}
+  .habititem .streak.brk{color:var(--brk);}
+  .hgroup{font-size:12px; font-weight:700; color:var(--muted); letter-spacing:.3px; margin:14px 2px 2px;}
+  .hgroup:first-child{margin-top:2px;}
+  #htypeSeg .pillbtn, #ehTypeSeg .pillbtn{flex:1; text-align:center;}
   .habititem .hmeta{flex:1; min-width:0;}
   .habititem .name{font-size:15px; font-weight:600;}
   .habititem .tgt{font-size:11px; color:var(--muted);}
@@ -118,6 +123,7 @@
   .matrix .dhead.tdy .dn{color:#fff; background:var(--accent); border-radius:50%; width:20px; height:20px; line-height:20px; display:inline-block; margin:0 auto;}
   .matrix .mcell{width:30px; height:30px; border-radius:7px; background:var(--panel2); cursor:pointer; transition:.1s; border:1px solid transparent;}
   .matrix .mcell.on{background:var(--good);}
+  .matrix .mcell.brk.on, .matrix .mcell.brk.on.tcol, .matrix .mcell.brk.on.we{background:var(--brk);}
   .matrix .mcell.on:active{filter:brightness(.9);}
   .matrix .mcell.tcol{background:color-mix(in srgb,var(--accent) 14%,var(--panel2));}
   .matrix .mcell.on.tcol{background:var(--good);}
@@ -272,7 +278,11 @@
         <span class="sub" id="sheetCount"></span>
       </div>
       <div id="habitSheet"></div>
-      <div class="addrow" style="border:none; padding:10px 0 0;">
+      <div class="seg" id="htypeSeg" style="margin:10px 0 8px;">
+        <button type="button" class="pillbtn active" data-htype="form">🌱 Build</button>
+        <button type="button" class="pillbtn" data-htype="break">🚫 Break</button>
+      </div>
+      <div class="addrow" style="border:none; padding:0;">
         <input id="newHabit" placeholder="New habit (e.g. Drink water)" />
         <button id="addHabit">＋</button>
       </div>
@@ -681,19 +691,25 @@ function renderSheet(){
   const sheet=document.getElementById('habitSheet'); sheet.innerHTML='';
   if(!habits.length){ sheet.innerHTML='<div class="empty">No habits yet. Add your first below 👇</div>'; document.getElementById('sheetCount').textContent=''; return; }
   let done=0;
-  habits.forEach(h=>{
+  const mkItem=(h)=>{
+    const brk=(h.type||'form')==='break';
     const on=!!(hlog[h.id]||{})[hSelected]; if(on)done++;
     const streak=currentStreak(h.id,d);
     const wk = h.goal ? weekProgress(h.id,d) : null;
     const item=document.createElement('div'); item.className='habititem';
-    item.innerHTML=`<div class="check ${on?'on':''}">✓</div>
+    item.innerHTML=`<div class="check ${brk?'brk ':''}${on?'on':''}">✓</div>
       <div class="hmeta"><div class="name">${escapeHtml(h.name)}</div>${wk?`<div class="tgt">${wk.done}/${h.goal} this week</div>`:''}</div>
-      ${streak>1?`<span class="streak">🔥 ${streak}</span>`:''}<button class="del">✕</button>`;
+      ${streak>1?`<span class="streak ${brk?'brk':''}">${brk?'🛡️':'🔥'} ${streak}</span>`:''}<button class="del">✕</button>`;
     item.querySelector('.check').onclick=()=>toggleHabit(h.id,hSelected);
     item.querySelector('.del').onclick=()=>{ if(confirm(`Delete habit "${h.name}"?`)){ habits=habits.filter(x=>x.id!==h.id); delete hlog[h.id]; persist(); renderHabits(); } };
     item.querySelector('.name').onclick=()=>editHabit(h);
-    sheet.appendChild(item);
-  });
+    return item;
+  };
+  const forms=habits.filter(h=>(h.type||'form')!=='break'), breaks=habits.filter(h=>(h.type||'form')==='break');
+  const both=forms.length&&breaks.length;
+  const addGroup=(list,label)=>{ if(!list.length) return; if(both){ const hd=document.createElement('div'); hd.className='hgroup'; hd.textContent=label; sheet.appendChild(hd); } list.forEach(h=>sheet.appendChild(mkItem(h))); };
+  addGroup(forms,'🌱 Building');
+  addGroup(breaks,'🚫 Breaking');
   document.getElementById('sheetCount').textContent=`${done}/${habits.length} done`;
 }
 function editHabit(h){
@@ -701,6 +717,11 @@ function editHabit(h){
   back.innerHTML=`<div class="modal">
     <h3>Edit habit</h3>
     <input class="txt" id="ehName" value="${escapeHtml(h.name)}" style="margin-bottom:12px;" />
+    <div class="sub" style="margin-bottom:6px;">Type</div>
+    <div class="seg" id="ehTypeSeg" style="margin-bottom:12px;">
+      <button type="button" class="pillbtn ${(h.type||'form')==='break'?'':'active'}" data-htype="form">🌱 Build</button>
+      <button type="button" class="pillbtn ${(h.type||'form')==='break'?'active':''}" data-htype="break">🚫 Break</button>
+    </div>
     <div class="sub" style="margin-bottom:6px;">Weekly goal (0 = every day / no target)</div>
     <input class="txt" id="ehGoal" type="number" min="0" max="7" value="${h.goal||0}" />
     <div class="row" style="margin-top:14px; gap:8px;">
@@ -709,11 +730,14 @@ function editHabit(h){
     </div>
   </div>`;
   document.body.appendChild(back);
+  let etype=h.type||'form';
+  back.querySelectorAll('#ehTypeSeg .pillbtn').forEach(b=>b.onclick=()=>{ etype=b.dataset.htype; back.querySelectorAll('#ehTypeSeg .pillbtn').forEach(x=>x.classList.toggle('active',x===b)); });
   back.onclick=e=>{ if(e.target===back)back.remove(); };
   back.querySelector('#ehCancel').onclick=()=>back.remove();
   back.querySelector('#ehSave').onclick=()=>{
     const nm=back.querySelector('#ehName').value.trim(); if(nm)h.name=nm;
     h.goal=Math.max(0,Math.min(7,+back.querySelector('#ehGoal').value||0));
+    h.type=etype;
     persist(); back.remove(); renderHabits(); toast('Saved');
   };
 }
@@ -753,8 +777,9 @@ function renderHabitMonth(){
   let totDone=0, totCells=0;
   habits.forEach(h=>{
     let done=0;
+    const brk=(h.type||'form')==='break';
     const name=document.createElement('div'); name.className='namecell';
-    name.innerHTML=`<div class="nm">${escapeHtml(h.name)}</div><div class="nsub">🔥 ${currentStreak(h.id,today)} · 🏆 ${longestStreak(h.id)}</div>`;
+    name.innerHTML=`<div class="nm">${brk?'🚫 ':'🌱 '}${escapeHtml(h.name)}</div><div class="nsub">${brk?'🛡️':'🔥'} ${currentStreak(h.id,today)} · 🏆 ${longestStreak(h.id)}</div>`;
     name.title='Tap to edit'; name.onclick=()=>editHabit(h);
     grid.appendChild(name);
     for(let day=1; day<=n; day++){
@@ -762,7 +787,7 @@ function renderHabitMonth(){
       const on=!!(hlog[h.id]||{})[k]; if(on)done++;
       const we=(d.getDay()===0||d.getDay()===6); const tcol=isSameDay(d,today);
       const c=document.createElement('div');
-      c.className='mcell'+(on?' on':'')+(we?' we':'')+(tcol?' tcol':'');
+      c.className='mcell'+(brk?' brk':'')+(on?' on':'')+(we?' we':'')+(tcol?' tcol':'');
       c.onclick=()=>toggleHabit(h.id,k);
       grid.appendChild(c);
     }
@@ -774,7 +799,8 @@ function renderHabitMonth(){
   // scroll so today is visible
   if(todayCol){ scroll.scrollLeft = Math.max(0,(todayCol-4)*34); }
 }
-function addHabit(){ const inp=document.getElementById('newHabit'); const v=inp.value.trim(); if(!v)return; habits.push({id:uid(),name:v,goal:0}); inp.value=''; persist(); renderHabits(); toast('Habit added'); }
+let newHabitType='form';   // 'form' (build) | 'break' (quit) for the next habit added
+function addHabit(){ const inp=document.getElementById('newHabit'); const v=inp.value.trim(); if(!v)return; habits.push({id:uid(),name:v,goal:0,type:newHabitType}); inp.value=''; persist(); renderHabits(); toast(newHabitType==='break'?'Habit to break added':'Habit added'); }
 function renderHabits(){ const m=document.querySelector('main'); const y=m?m.scrollTop:0; renderDayStrip(); renderSheet(); renderHabitMonth(); if(m) m.scrollTop=y; }   // scroll lives on <main> (overflow-y:auto), not window; preserve it so rebuilding the month grid doesn't jump to top
 
 /* =======================================================
@@ -808,6 +834,7 @@ document.getElementById('hPrev').onclick=()=>{ hMonth=new Date(hMonth.getFullYea
 document.getElementById('hNext').onclick=()=>{ hMonth=new Date(hMonth.getFullYear(),hMonth.getMonth()+1,1); hSelected=key(new Date(hMonth.getFullYear(),hMonth.getMonth(),1)); renderHabits(); };
 document.getElementById('addHabit').onclick=addHabit;
 document.getElementById('newHabit').addEventListener('keydown',e=>{if(e.key==='Enter')addHabit();});
+document.querySelectorAll('#htypeSeg .pillbtn').forEach(b=>b.onclick=()=>{ newHabitType=b.dataset.htype; document.querySelectorAll('#htypeSeg .pillbtn').forEach(x=>x.classList.toggle('active',x===b)); });
 document.getElementById('themeBtn').onclick=()=>setTheme(document.documentElement.getAttribute('data-theme')==='light'?'dark':'light');
 document.getElementById('jumpToday').onclick=()=>{
   if(tab==='tasks'){ tMonth=new Date(today.getFullYear(),today.getMonth(),1); weekStart=startOfWeek(today); refreshTasks(); }
@@ -1276,7 +1303,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.0.1';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.0.2';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
