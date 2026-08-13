@@ -180,7 +180,7 @@
   .modalback{position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:30; display:flex; align-items:flex-end; justify-content:center; animation:fade .2s;}
   .modal{background:var(--panel); width:100%; max-width:520px; border-radius:18px 18px 0 0; padding:16px 16px calc(20px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); max-height:90vh; display:flex; flex-direction:column;}
   .modal>*{flex-shrink:0;}
-  .modal #mList, .modal #trList, .modal #cmpList{overflow-y:auto; flex-shrink:1; min-height:0;}
+  .modal #mList, .modal #trList, .modal #cmpList, .modal #exList{overflow-y:auto; flex-shrink:1; min-height:0;}
   .modal h3{margin:2px 0 12px;}
   .msort{display:flex; align-items:center; gap:6px; margin-bottom:10px;}
   .taskline .tm{font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap;}
@@ -193,6 +193,26 @@
   .renameinp{flex:1; font-size:14px; background:var(--panel2); border:1px solid var(--accent); border-radius:6px; padding:4px 6px; color:var(--text); outline:none; min-width:0;}
   .cname{cursor:pointer;}
   .weekday .addtask{display:block; margin:8px 12px 12px; padding:9px; font-size:13px;}
+  #gymSince{display:flex; flex-wrap:wrap; gap:6px;}
+  .gchip{display:flex; flex-direction:column; align-items:center; gap:1px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px 9px; cursor:pointer; min-width:52px;}
+  .gchip .gt{font-size:11px; font-weight:700; text-transform:capitalize;}
+  .gchip .gd{font-size:10px; color:var(--muted);}
+  .gchip.none{opacity:.5; cursor:default;}
+  .ssub{font-size:12px; color:var(--muted); padding:6px 12px 10px;}
+  .gtypes{flex-wrap:wrap;}
+  #sType .pillbtn{text-transform:capitalize; padding:6px 10px;}
+  .cmphead{font-size:12px; color:var(--muted); margin:8px 2px 4px;}
+  .exblock{border:1px solid var(--line); border-radius:10px; padding:8px; margin-bottom:8px;}
+  .exhead{display:flex; gap:8px; align-items:center;}
+  .exhead .exname{flex:1;}
+  .excmp{font-size:11px; color:var(--brk); font-weight:600; margin:5px 2px;}
+  .setrow{display:flex; align-items:center; gap:6px; margin-top:6px;}
+  .setrow .setn{width:16px; text-align:center; color:var(--muted); font-size:12px; flex:0 0 auto;}
+  .setrow .txt{padding:6px 8px; font-size:14px;}
+  .setrow .sw, .setrow .srp{width:62px; flex:0 0 auto;}
+  .setrow .sx{color:var(--muted);}
+  .dropl{font-size:11px; color:var(--muted); display:flex; align-items:center; gap:3px; white-space:nowrap;}
+  .exblock .addset{padding:5px 9px; font-size:12px; margin-top:8px; width:auto;}
   .tdash{color:var(--muted); font-weight:600;}
   .pchips{display:flex; gap:8px; margin:6px 0 2px;}
   .pchip{flex:1; text-align:center; padding:8px; border-radius:10px; border:1px solid var(--line); font-size:12px; font-weight:600; cursor:pointer; color:var(--muted);}
@@ -314,12 +334,21 @@
     </div>
     <div id="courseList"></div>
   </section>
+
+  <!-- ===================== GYM ===================== -->
+  <section id="view-gym" class="hidden">
+    <div id="gymSince"></div>
+    <button class="btn" id="logSession" style="width:100%; margin:12px 0;">＋ Log session</button>
+    <div class="row" style="margin:4px 2px 8px;"><strong>History</strong></div>
+    <div id="sessionList"></div>
+  </section>
 </main>
 
 <nav class="tabs">
   <button data-tab="tasks" class="active"><span class="ic">🗓️</span>Tasks</button>
   <button data-tab="habits"><span class="ic">🔥</span>Habits</button>
   <button data-tab="uni"><span class="ic">🎓</span>Uni</button>
+  <button data-tab="gym"><span class="ic">🏋️</span>Gym</button>
 </nav>
 
 <div id="toast" class="toast"></div>
@@ -397,8 +426,11 @@ let habits = DB.load('tk_habits', []);  // [ {id,name,goal} ]  goal = times/week
 let hlog   = DB.load('tk_hlog', {});    // { habitId: { 'YYYY-MM-DD': true } }
 let trash  = DB.load('tk_trash', []);   // [ {d:'YYYY-MM-DD', at:ts, t:{...task}} ] — deleted tasks, restorable
 let courses = DB.load('tk_courses', []);   // [ {id, name, items:[{id,text,done}]} ] — uni courses & their subtasks
+let sessions = DB.load('tk_sessions', []);   // [ {id, type, date:'YYYY-MM-DD', exercises:[{id,name,sets:[{w,r,drop}]}]} ] — gym log
+const GTYPES=['push','pull','legs','back','arms','chest','shoulders','cardio','other'];
 const persist = () => { DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog); DB.save('tk_trash',trash); DB.save('tk_courses',courses); cloudPush(); gPushSchedule(); };
 function persistCourses(){ DB.save('tk_courses',courses); cloudPush(); gPushSchedule(); }   // gPush also syncs due-dated uni subtasks to Google Tasks
+function persistGym(){ DB.save('tk_sessions',sessions); cloudPush(); }   // gym stays local + Firebase only
 const uid = () => Math.random().toString(36).slice(2,9);
 
 /* ---------------- date helpers ---------------- */
@@ -757,6 +789,99 @@ function openSubtaskModal(c,it){
   setTimeout(()=>back.querySelector('#stName').focus(),50);
 }
 
+/* ---- Gym: training sessions ---- */
+function daysSince(dateStr){ const d=parse(dateStr); const a=new Date(d.getFullYear(),d.getMonth(),d.getDate()); const t=new Date(today.getFullYear(),today.getMonth(),today.getDate()); return Math.round((t-a)/86400000); }
+function sinceLabel(dateStr){ const n=daysSince(dateStr); return n<=0?'today':n===1?'1d ago':n+'d ago'; }
+function sortedSessions(){ return sessions.slice().sort((a,b)=> a.date<b.date?1 : a.date>b.date?-1 : (a.id<b.id?1:-1)); }
+function lastSessionOfType(type,excludeId){ return sortedSessions().find(s=>s.type===type && s.id!==excludeId) || null; }
+function fmtSets(ex){ return (ex.sets||[]).map(s=>`${s.w||0}×${s.r||0}${s.drop?'↓':''}`).join(', '); }
+function renderGym(){
+  const m=document.querySelector('main'); const y=m?m.scrollTop:0;
+  const since=document.getElementById('gymSince'); since.innerHTML='';
+  GTYPES.forEach(tp=>{
+    const last=lastSessionOfType(tp,null);
+    const chip=document.createElement('button'); chip.type='button'; chip.className='gchip'+(last?'':' none');
+    chip.innerHTML=`<span class="gt">${tp}</span><span class="gd">${last?sinceLabel(last.date):'—'}</span>`;
+    if(last) chip.onclick=()=>openSessionEditor(last);
+    since.appendChild(chip);
+  });
+  const wrap=document.getElementById('sessionList'); wrap.innerHTML='';
+  const list=sortedSessions();
+  if(!list.length){ wrap.innerHTML='<div class="empty">No sessions logged yet. Tap “Log session”.</div>'; if(m)m.scrollTop=y; return; }
+  list.forEach(s=>{
+    const exn=(s.exercises||[]).length, setn=(s.exercises||[]).reduce((a,e)=>a+(e.sets||[]).length,0);
+    const card=document.createElement('div'); card.className='weekday'; card.style.cursor='pointer';
+    card.innerHTML=`<div class="wh"><span class="wd">🏋️ ${s.type}</span><span class="spacer"></span><span class="sub">${fmtDate(s.date)} · ${sinceLabel(s.date)}</span></div><div class="ssub">${exn} exercise${exn===1?'':'s'} · ${setn} set${setn===1?'':'s'}</div>`;
+    card.onclick=()=>openSessionEditor(s);
+    wrap.appendChild(card);
+  });
+  if(m)m.scrollTop=y;
+}
+function openSessionEditor(session){
+  const isNew=!session;
+  const s = isNew ? {id:uid(), type:'', date:key(today), exercises:[]} : JSON.parse(JSON.stringify(session));
+  const back=document.createElement('div'); back.className='modalback';
+  back.innerHTML=`<div class="modal">
+    <h3>${isNew?'New session':'Session'}</h3>
+    <div class="seg gtypes" id="sType">${GTYPES.map(tp=>`<button type="button" class="pillbtn ${s.type===tp?'active':''}" data-tp="${tp}">${tp}</button>`).join('')}</div>
+    <div class="trow"><span class="sub">Date</span><input type="date" id="sDate" class="txt" value="${s.date}" style="width:auto;"></div>
+    <div id="cmpHead" class="cmphead"></div>
+    <div id="exList"></div>
+    <button type="button" class="btn ghost" id="addEx" style="width:100%; margin-top:8px;">＋ Exercise</button>
+    <div class="row" style="margin-top:14px; gap:8px;">
+      ${isNew?'':'<button type="button" class="btn ghost" id="sDelete">Delete</button>'}
+      <button type="button" class="btn ghost" id="sCancel" style="flex:1;">Cancel</button>
+      <button type="button" class="btn" id="sSave" style="flex:1;">Save</button>
+    </div>
+  </div>`;
+  document.body.appendChild(back);
+  const prevRef=()=>lastSessionOfType(s.type, s.id);
+  const drawCmpHead=()=>{ const p=prevRef(); const h=back.querySelector('#cmpHead'); h.textContent = s.type ? (p?`Last ${s.type}: ${fmtDate(p.date)} · ${sinceLabel(p.date)}`:`First ${s.type} session`) : 'Pick a session type ↑'; };
+  const drawEx=()=>{
+    const host=back.querySelector('#exList'); host.innerHTML='';
+    const prev=prevRef();
+    (s.exercises||[]).forEach((ex,ei)=>{
+      const block=document.createElement('div'); block.className='exblock';
+      let cmp='';
+      if(prev && (ex.name||'').trim()){ const pe=(prev.exercises||[]).find(x=>(x.name||'').trim().toLowerCase()===ex.name.trim().toLowerCase()); if(pe) cmp=`<div class="excmp">Last: ${fmtSets(pe)}</div>`; }
+      block.innerHTML=`<div class="exhead"><input class="txt exname" placeholder="Exercise name" value="${escapeHtml(ex.name||'')}"><button class="del exdel" title="Remove exercise">✕</button></div>${cmp}<div class="setrows"></div><button type="button" class="btn ghost addset">＋ set</button>`;
+      const nameInp=block.querySelector('.exname'); nameInp.oninput=()=>{ ex.name=nameInp.value; }; nameInp.onchange=()=>drawEx();
+      block.querySelector('.exdel').onclick=()=>{ s.exercises.splice(ei,1); drawEx(); };
+      const sr=block.querySelector('.setrows');
+      (ex.sets||[]).forEach((st,si)=>{
+        const rowEl=document.createElement('div'); rowEl.className='setrow';
+        rowEl.innerHTML=`<span class="setn">${si+1}</span><input class="txt sw" type="number" inputmode="decimal" placeholder="kg" value="${st.w??''}"><span class="sx">×</span><input class="txt srp" type="number" inputmode="numeric" placeholder="reps" value="${st.r??''}"><label class="dropl"><input type="checkbox" class="sdrop" ${st.drop?'checked':''}>drop</label><button class="del sdel" title="Remove set">✕</button>`;
+        rowEl.querySelector('.sw').oninput=e=>{ st.w=e.target.value===''?'':+e.target.value; };
+        rowEl.querySelector('.srp').oninput=e=>{ st.r=e.target.value===''?'':+e.target.value; };
+        rowEl.querySelector('.sdrop').onchange=e=>{ st.drop=e.target.checked; };
+        rowEl.querySelector('.sdel').onclick=()=>{ ex.sets.splice(si,1); drawEx(); };
+        sr.appendChild(rowEl);
+      });
+      block.querySelector('.addset').onclick=()=>{ ex.sets=ex.sets||[]; const l=ex.sets[ex.sets.length-1]; ex.sets.push(l?{w:l.w,r:l.r,drop:false}:{w:'',r:'',drop:false}); drawEx(); };
+      host.appendChild(block);
+    });
+  };
+  const setType=(tp)=>{
+    s.type=tp;
+    back.querySelectorAll('#sType .pillbtn').forEach(b=>b.classList.toggle('active',b.dataset.tp===tp));
+    if(isNew && (!s.exercises||!s.exercises.length)){ const p=lastSessionOfType(tp,s.id); if(p){ s.exercises=(p.exercises||[]).map(e=>({id:uid(),name:e.name,sets:(e.sets||[]).map(x=>({w:x.w,r:x.r,drop:!!x.drop}))})); toast('Prefilled from last '+tp); } }
+    drawCmpHead(); drawEx();
+  };
+  back.querySelectorAll('#sType .pillbtn').forEach(b=>b.onclick=()=>setType(b.dataset.tp));
+  back.querySelector('#sDate').onchange=e=>{ s.date=e.target.value||s.date; };
+  back.querySelector('#addEx').onclick=()=>{ s.exercises=s.exercises||[]; s.exercises.push({id:uid(),name:'',sets:[{w:'',r:'',drop:false}]}); drawEx(); };
+  const del=back.querySelector('#sDelete'); if(del) del.onclick=()=>{ if(confirm('Delete this session?')){ sessions=sessions.filter(x=>x.id!==s.id); persistGym(); back.remove(); renderGym(); } };
+  back.querySelector('#sCancel').onclick=()=>back.remove();
+  back.querySelector('#sSave').onclick=()=>{
+    if(!s.type){ toast('Pick a session type'); return; }
+    s.exercises=(s.exercises||[]).filter(e=>(e.name||'').trim() || (e.sets||[]).length);
+    if(isNew){ sessions.push(s); } else { const i=sessions.findIndex(x=>x.id===s.id); if(i>=0) sessions[i]=s; else sessions.push(s); }
+    persistGym(); back.remove(); renderGym();
+  };
+  drawCmpHead(); drawEx();
+  back.onclick=e=>{ if(e.target===back) back.remove(); };
+}
+
 /* =======================================================
    HABITS
 ======================================================= */
@@ -903,8 +1028,9 @@ function setTab(t){
   document.getElementById('view-tasks').classList.toggle('hidden',t!=='tasks');
   document.getElementById('view-habits').classList.toggle('hidden',t!=='habits');
   document.getElementById('view-uni').classList.toggle('hidden',t!=='uni');
+  document.getElementById('view-gym').classList.toggle('hidden',t!=='gym');
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
-  if(t==='tasks') refreshTasks(); else if(t==='uni') renderUni(); else renderHabits();
+  if(t==='tasks') refreshTasks(); else if(t==='uni') renderUni(); else if(t==='gym') renderGym(); else renderHabits();
 }
 function setTaskView(v){
   taskView=v;
@@ -929,6 +1055,7 @@ document.getElementById('addHabit').onclick=addHabit;
 document.getElementById('newHabit').addEventListener('keydown',e=>{if(e.key==='Enter')addHabit();});
 document.getElementById('addCourse').onclick=addCourse;
 document.getElementById('newCourse').addEventListener('keydown',e=>{if(e.key==='Enter')addCourse();});
+document.getElementById('logSession').onclick=()=>openSessionEditor(null);
 document.querySelectorAll('#htypeSeg .pillbtn').forEach(b=>b.onclick=()=>{ newHabitType=b.dataset.htype; document.querySelectorAll('#htypeSeg .pillbtn').forEach(x=>x.classList.toggle('active',x===b)); });
 document.getElementById('themeBtn').onclick=()=>setTheme(document.documentElement.getAttribute('data-theme')==='light'?'dark':'light');
 document.getElementById('jumpToday').onclick=()=>{
@@ -942,7 +1069,7 @@ document.getElementById('jumpToday').onclick=()=>{
 ======================================================= */
 const cloud = { on:false, uid:null, db:null, unsub:null, applyingRemote:false, authMode:'signin' };
 function fbConfigured(){ return firebaseConfig && firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith('PASTE_'); }
-function rerenderAll(){ if(tab==='tasks') refreshTasks(); else if(tab==='uni') renderUni(); else renderHabits(); }
+function rerenderAll(){ if(tab==='tasks') refreshTasks(); else if(tab==='uni') renderUni(); else if(tab==='gym') renderGym(); else renderHabits(); }
 
 function setSync(state){ // synced | syncing | error
   const b=document.getElementById('acctBtn');
@@ -958,13 +1085,13 @@ function cloudPush(){
   clearTimeout(pushT);
   pushT=setTimeout(()=>{
     cloud.db.collection('users').doc(cloud.uid).set({
-      tasks, habits, hlog, trash, courses,
+      tasks, habits, hlog, trash, courses, sessions,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }).then(()=>setSync('synced')).catch(err=>{ console.error(err); setSync('error'); });
   }, 700);
 }
 
-function setLocalData(t,h,l,tr,co){
+function setLocalData(t,h,l,tr,co,se){
   cloud.applyingRemote=true;
   trash = tr||[]; DB.save('tk_trash',trash);
   // Preserve a uni subtask's Google link if a stale cloud echo lacks it (same race as tasks below).
@@ -972,6 +1099,7 @@ function setLocalData(t,h,l,tr,co){
   co=co||[]; const UKEYS=['gtaskId','gtaskPushedAt','gHash'];
   co.forEach(c=>(c.items||[]).forEach(x=>{ const p=uprev[x.id]; if(p && x.gtaskId==null && p.gtaskId!=null) UKEYS.forEach(f=>{ if(p[f]!=null) x[f]=p[f]; }); }));
   courses = co; DB.save('tk_courses',courses);
+  sessions = se||[]; DB.save('tk_sessions',sessions);
   // A cloud snapshot can echo back a task that was saved just before it received its
   // Google ids (the push runs after the first cloudPush). Replacing tasks wholesale
   // would orphan that link and make the next gPull re-import the task as a duplicate.
@@ -1000,7 +1128,7 @@ function cloudSubscribe(){
     }
     if(snap.metadata.hasPendingWrites) return;    // ignore the echo of our own write
     const data=snap.data()||{};
-    setLocalData(data.tasks||{}, data.habits||[], data.hlog||{}, data.trash||[], data.courses||[]);
+    setLocalData(data.tasks||{}, data.habits||[], data.hlog||{}, data.trash||[], data.courses||[], data.sessions||[]);
     localStorage.setItem('tk_owner', cloud.uid);
     setSync('synced');
   }, err=>{ console.error(err); setSync('error'); });
@@ -1432,7 +1560,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.0.9';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.1.0';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
