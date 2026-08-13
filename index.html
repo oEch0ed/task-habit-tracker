@@ -305,6 +305,17 @@
   </form>
 </div>
 
+<!-- ===================== BIOMETRIC LOCK OVERLAY ===================== -->
+<div id="lockOverlay" class="authwrap hidden" style="z-index:90;">
+  <div class="authcard" style="text-align:center;">
+    <div class="authlogo">🔒 Track</div>
+    <div class="authsub">Locked on this device. Unlock with Face ID / Touch ID.</div>
+    <button class="btn" id="lockBtn" type="button" style="width:100%;">Unlock</button>
+    <div class="autherr" id="lockErr"></div>
+    <button type="button" class="authskip" id="lockPwd">Unlock with your account password instead</button>
+  </div>
+</div>
+
 <!-- Firebase compat SDK (no build step needed) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
@@ -887,12 +898,90 @@ function wireAuthUI(){
     toast('Offline mode — changes stay on this device');
   };
 
-  document.getElementById('acctBtn').onclick=()=>{
-    const email=firebase.auth().currentUser?.email || '';
-    if(confirm(`Signed in as ${email}\n\nSign out on this device? Your data stays safe in the cloud.`)){
-      firebase.auth().signOut();
-    }
+  document.getElementById('acctBtn').onclick=openAccountModal;
+}
+
+/* ---- Biometric app-lock (WebAuthn platform authenticator: Face ID / Touch ID / passkey) ----
+   A local unlock gate over the already-signed-in session. No backend, so a successful
+   platform user-verification is the gate (not a server-verified assertion). */
+const BIO_KEY='tk_biolock';
+function bioLockActive(){ const s=DB.load(BIO_KEY,null); return !!(s&&s.enabled&&s.id); }
+async function bioAvailable(){ try{ return !!window.PublicKeyCredential && !!navigator.credentials && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); }catch(e){ return false; } }
+function randBytes(n){ const a=new Uint8Array(n); crypto.getRandomValues(a); return a; }
+function b64url(buf){ const b=btoa(String.fromCharCode(...new Uint8Array(buf))); return b.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function fromB64url(s){ s=s.replace(/-/g,'+').replace(/_/g,'/'); const pad=s.length%4?'='.repeat(4-s.length%4):''; const bin=atob(s+pad); const a=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i); return a; }
+async function bioEnable(){
+  const uid = cloud.uid || 'local';
+  const cred = await navigator.credentials.create({ publicKey:{
+    challenge: randBytes(32),
+    rp: { name:'Track', id: location.hostname },
+    user: { id: new TextEncoder().encode(uid), name: (firebase.auth().currentUser&&firebase.auth().currentUser.email)||'Track user', displayName:'Track' },
+    pubKeyCredParams: [{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+    authenticatorSelection: { authenticatorAttachment:'platform', userVerification:'required', residentKey:'preferred' },
+    timeout:60000, attestation:'none'
+  }});
+  if(!cred) throw new Error('no credential');
+  DB.save(BIO_KEY, { id:b64url(cred.rawId), enabled:true, uid });
+  return true;
+}
+function bioDisable(){ localStorage.removeItem(BIO_KEY); }
+async function bioVerify(){
+  const s=DB.load(BIO_KEY,null); if(!s||!s.enabled) return true;
+  const cred=await navigator.credentials.get({ publicKey:{
+    challenge: randBytes(32),
+    allowCredentials:[{ type:'public-key', id: fromB64url(s.id), transports:['internal'] }],
+    userVerification:'required', timeout:60000, rpId: location.hostname
+  }});
+  if(!cred) throw new Error('no assertion');
+  return true;
+}
+function showLock(){ const e=document.getElementById('lockErr'); if(e) e.textContent=''; document.getElementById('lockOverlay').classList.remove('hidden'); }
+function hideLock(){ document.getElementById('lockOverlay').classList.add('hidden'); }
+async function tryUnlock(){
+  const err=document.getElementById('lockErr'), btn=document.getElementById('lockBtn');
+  err.textContent=''; btn.disabled=true;
+  try{ await bioVerify(); hideLock(); }
+  catch(e){ console.warn('[bio unlock]',e); err.textContent='Unlock failed — try again.'; }
+  finally{ btn.disabled=false; }
+}
+function maybeLock(){ if(bioLockActive()) showLock(); }   // user taps Unlock (iOS needs a gesture for WebAuthn)
+let bioAwaySince=0;
+document.getElementById('lockBtn').onclick=tryUnlock;
+document.getElementById('lockPwd').onclick=()=>{ bioDisable(); hideLock(); firebase.auth().signOut(); };   // escape hatch: password re-auth
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){ bioAwaySince=Date.now(); }
+  else if(bioLockActive() && bioAwaySince && Date.now()-bioAwaySince>30000){ showLock(); }   // re-lock after 30s away
+});
+
+function openAccountModal(){
+  const email=(firebase.auth().currentUser&&firebase.auth().currentUser.email)||'';
+  const back=document.createElement('div'); back.className='modalback';
+  back.innerHTML=`<div class="modal">
+    <h3>Account</h3>
+    <p class="sub" style="margin:-4px 0 14px;">${email?escapeHtml(email):'Offline mode'}</p>
+    <div class="row" id="bioRow" style="display:none; padding:6px 0 10px;">
+      <div><strong>Lock with Face ID / Touch ID</strong><div class="sub">Require biometrics to open Track on this device.</div></div>
+      <span class="spacer"></span>
+      <button class="pillbtn" id="bioToggle" type="button"></button>
+    </div>
+    <button class="btn" id="acSignout" style="width:100%; margin-top:8px;">Sign out</button>
+    <button class="btn ghost" id="acClose" style="width:100%; margin-top:8px;">Close</button>
+  </div>`;
+  document.body.appendChild(back);
+  const row=back.querySelector('#bioRow'), tgl=back.querySelector('#bioToggle');
+  bioAvailable().then(ok=>{ row.style.display = ok ? 'flex' : 'none'; });
+  const syncTgl=()=>{ const on=bioLockActive(); tgl.textContent=on?'On':'Off'; tgl.classList.toggle('active',on); };
+  syncTgl();
+  tgl.onclick=async()=>{
+    if(bioLockActive()){ bioDisable(); toast('Biometric lock off'); syncTgl(); return; }
+    tgl.disabled=true; tgl.textContent='…';
+    try{ await bioEnable(); toast('Biometric lock on'); }
+    catch(e){ console.warn('[bio enable]',e); toast('Couldn’t set up biometrics'); }
+    tgl.disabled=false; syncTgl();
   };
+  back.querySelector('#acSignout').onclick=()=>{ if(confirm('Sign out on this device? Your data stays safe in the cloud.')){ bioDisable(); firebase.auth().signOut(); back.remove(); } };
+  back.querySelector('#acClose').onclick=()=>back.remove();
+  back.onclick=e=>{ if(e.target===back) back.remove(); };
 }
 
 function initCloud(){
@@ -1147,6 +1236,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
+maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
 document.getElementById('todayLabel').textContent = `${DOW[today.getDay()]}, ${MON[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
 renderTaskDow(); setTaskView('month'); setTab('tasks');
