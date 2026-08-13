@@ -193,6 +193,8 @@
   .authskip{background:none; border:none; color:var(--muted); font-size:12px; cursor:pointer; padding:2px;}
   .hbtn.syncing{animation:spin 1s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
+  .hbtn.gon{background:rgba(52,211,153,.4);}
+  .hbtn.gon:active{background:rgba(52,211,153,.55);}
 </style>
 </head>
 <body>
@@ -202,6 +204,7 @@
     <div class="date" id="todayLabel"></div>
   </div>
   <div class="hbtns">
+    <button class="hbtn hidden" id="gBtn" title="Connect Google Calendar & Tasks">📅</button>
     <button class="hbtn hidden" id="acctBtn" title="Sync / account">☁️</button>
     <button class="hbtn" id="themeBtn" title="Toggle theme">🌙</button>
     <button class="hbtn" id="jumpToday" title="Jump to today">◎</button>
@@ -300,6 +303,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
 
+<!-- Google Identity Services (for Calendar & Tasks OAuth) -->
+<script src="https://accounts.google.com/gsi/client" async></script>
+
 <script>
 /* =======================================================
    FIREBASE CONFIG  —  PASTE YOUR PROJECT CONFIG HERE
@@ -317,6 +323,11 @@ const firebaseConfig = {
   appId: "1:796647778770:web:9da694ab4d6f842626800b",
   measurementId: "G-D5G7RL7FR2"
 };
+
+/* Google Calendar & Tasks OAuth client (from Google Cloud → Credentials).
+   Safe in client code. Leave blank to hide the Google integration. */
+const GOOGLE_CLIENT_ID = "796647778770-179nrrm7plrhl2fa6vsl3lsm3t207t6h.apps.googleusercontent.com";
+const GOOGLE_SCOPES = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/tasks";
 
 /* ---------------- storage ---------------- */
 const DB = {
@@ -806,11 +817,87 @@ function initCloud(){
   firebase.auth().onAuthStateChanged(onAuth);
 }
 
+/* =======================================================
+   GOOGLE CALENDAR & TASKS  (Phase 1: connect + verify)
+======================================================= */
+const gapiState = { tokenClient:null, token:null, expiry:0 };
+function gConfigured(){ return GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith('PASTE'); }
+function gConnected(){ return !!gapiState.token && Date.now() < gapiState.expiry; }
+function updateGBtn(){
+  const b=document.getElementById('gBtn'); if(!b) return;
+  b.classList.toggle('hidden', !gConfigured());
+  b.classList.toggle('gon', gConnected());
+  b.title = gConnected() ? 'Google connected — tap to disconnect' : 'Connect Google Calendar & Tasks';
+}
+
+function gInitWhenReady(tries=0){
+  if(!gConfigured()){ updateGBtn(); return; }
+  if(typeof google==='undefined' || !google.accounts || !google.accounts.oauth2){
+    if(tries<40) setTimeout(()=>gInitWhenReady(tries+1),250);   // wait for GIS script
+    return;
+  }
+  gapiState.tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID, scope: GOOGLE_SCOPES, callback: ()=>{}
+  });
+  if(localStorage.getItem('tk_gconnected')==='1') gConnect(true);   // silent reconnect
+  updateGBtn();
+}
+
+function gGetToken(interactive){
+  return new Promise((resolve,reject)=>{
+    const tc=gapiState.tokenClient; if(!tc){ reject(new Error('Google not ready')); return; }
+    tc.callback = (resp)=>{
+      if(resp && resp.error){ reject(resp); return; }
+      gapiState.token = resp.access_token;
+      gapiState.expiry = Date.now() + ((resp.expires_in||3600)*1000) - 60000;
+      resolve(resp.access_token);
+    };
+    tc.error_callback = (err)=>reject(err);
+    tc.requestAccessToken(interactive ? {} : { prompt:'' });
+  });
+}
+
+async function gApi(url, opts={}){
+  if(!gConnected()) await gGetToken(false);
+  const doFetch = () => fetch(url, { ...opts, headers:{ ...(opts.headers||{}), Authorization:'Bearer '+gapiState.token } });
+  let r = await doFetch();
+  if(r.status===401){ await gGetToken(false); r = await doFetch(); }   // token expired → refresh once
+  return r;
+}
+
+async function gVerify(){
+  const cal = await (await gApi('https://www.googleapis.com/calendar/v3/calendars/primary')).json();
+  const tl  = await (await gApi('https://www.googleapis.com/tasks/v1/users/@me/lists')).json();
+  const lists = (tl.items||[]).map(x=>x.title);
+  console.log('[Google] primary calendar:', cal.summary, '| task lists:', lists);
+  return `Connected · ${cal.summary||'calendar'} · ${lists.length} task list${lists.length===1?'':'s'}`;
+}
+
+function gConnect(silent){
+  gGetToken(!silent).then(async ()=>{
+    localStorage.setItem('tk_gconnected','1'); updateGBtn();
+    if(!silent){ try{ toast(await gVerify()); }catch(e){ console.error(e); toast('Connected, but API check failed'); } }
+  }).catch(err=>{ console.warn('[Google] connect failed', err); if(!silent) toast('Google connect canceled'); updateGBtn(); });
+}
+
+function gDisconnect(){
+  try{ if(gapiState.token) google.accounts.oauth2.revoke(gapiState.token, ()=>{}); }catch(e){}
+  gapiState.token=null; gapiState.expiry=0;
+  localStorage.removeItem('tk_gconnected'); updateGBtn(); toast('Disconnected Google');
+}
+
+document.getElementById('gBtn').onclick=()=>{
+  if(gConnected() || localStorage.getItem('tk_gconnected')==='1'){
+    if(confirm('Disconnect Google Calendar & Tasks?')) gDisconnect();
+  } else gConnect(false);
+};
+
 /* init */
 setTheme(localStorage.getItem('tk_theme')||'dark');
 document.getElementById('todayLabel').textContent = `${DOW[today.getDay()]}, ${MON[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
 renderTaskDow(); setTaskView('month'); setTab('tasks');
 initCloud();
+gInitWhenReady();
 </script>
 </body>
 </html>
