@@ -173,6 +173,17 @@
   @media(min-width:560px){ .modalback{align-items:center;} .modal{border-radius:18px;} }
   .toast{position:fixed; bottom:82px; left:50%; transform:translateX(-50%); background:#000; color:#fff; padding:9px 16px; border-radius:99px; font-size:13px; z-index:50; opacity:0; transition:.25s; pointer-events:none;}
   .toast.show{opacity:.92;}
+
+  /* AUTH / SYNC */
+  .authwrap{position:fixed; inset:0; z-index:80; background:linear-gradient(150deg,var(--accent),var(--accent2)); display:flex; align-items:center; justify-content:center; padding:20px calc(20px + env(safe-area-inset-left)); animation:fade .2s;}
+  .authcard{background:var(--panel); width:100%; max-width:380px; border-radius:20px; padding:26px 22px calc(22px + env(safe-area-inset-bottom)); box-shadow:0 20px 50px rgba(0,0,0,.35); display:flex; flex-direction:column; gap:12px;}
+  .authlogo{font-size:24px; font-weight:800; letter-spacing:.3px; text-align:center;}
+  .authsub{color:var(--muted); font-size:13px; text-align:center; margin-bottom:4px; line-height:1.4;}
+  .autherr{color:var(--danger); font-size:13px; min-height:18px; text-align:center;}
+  .authtoggle{background:none; border:none; color:var(--accent); font-size:13px; font-weight:600; cursor:pointer; padding:4px;}
+  .authskip{background:none; border:none; color:var(--muted); font-size:12px; cursor:pointer; padding:2px;}
+  .hbtn.syncing{animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
 </style>
 </head>
 <body>
@@ -182,6 +193,7 @@
     <div class="date" id="todayLabel"></div>
   </div>
   <div class="hbtns">
+    <button class="hbtn hidden" id="acctBtn" title="Sync / account">☁️</button>
     <button class="hbtn" id="themeBtn" title="Toggle theme">🌙</button>
     <button class="hbtn" id="jumpToday" title="Jump to today">◎</button>
   </div>
@@ -260,7 +272,43 @@
 
 <div id="toast" class="toast"></div>
 
+<!-- ===================== AUTH OVERLAY ===================== -->
+<div id="authOverlay" class="authwrap hidden">
+  <form class="authcard" id="authForm" autocomplete="on">
+    <div class="authlogo">☁️ Track</div>
+    <div class="authsub" id="authMsg">Sign in to sync your habits &amp; tasks across your devices.</div>
+    <input class="txt" id="authEmail" type="email" placeholder="Email" autocomplete="username" required />
+    <input class="txt" id="authPass" type="password" placeholder="Password" autocomplete="current-password" required minlength="6" />
+    <button class="btn" id="authBtn" type="submit" style="width:100%;">Sign in</button>
+    <div class="autherr" id="authErr"></div>
+    <button type="button" class="authtoggle" id="authToggle">First time? Create your account</button>
+    <button type="button" class="authskip" id="authSkip">Use offline on this device only</button>
+  </form>
+</div>
+
+<!-- Firebase compat SDK (no build step needed) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+
 <script>
+/* =======================================================
+   FIREBASE CONFIG  —  PASTE YOUR PROJECT CONFIG HERE
+   Firebase console → Project settings → Your apps → Web.
+   These values are safe in client code (they're identifiers,
+   not secrets); real protection comes from the Firestore rules
+   in the README. Leave as-is to run fully offline / local-only.
+======================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyCS-Gti9qOJuEteaExfK7y7b9GJoUQJ3N8",
+  authDomain: "habittracker-36f8a.firebaseapp.com",
+  projectId: "habittracker-36f8a",
+  storageBucket: "habittracker-36f8a.firebasestorage.app",
+  messagingSenderId: "796647778770",
+  appId: "1:796647778770:web:9da694ab4d6f842626800b",
+  measurementId: "G-D5G7RL7FR2"
+};
+
 /* ---------------- storage ---------------- */
 const DB = {
   load(k,def){ try{return JSON.parse(localStorage.getItem(k)) ?? def;}catch(e){return def;} },
@@ -269,7 +317,7 @@ const DB = {
 let tasks  = DB.load('tk_tasks', {});   // { 'YYYY-MM-DD': [ {id,text,done,prio} ] }
 let habits = DB.load('tk_habits', []);  // [ {id,name,goal} ]  goal = times/week (0 = daily/none)
 let hlog   = DB.load('tk_hlog', {});    // { habitId: { 'YYYY-MM-DD': true } }
-const persist = () => { DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog); };
+const persist = () => { DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog); cloudPush(); };
 const uid = () => Math.random().toString(36).slice(2,9);
 
 /* ---------------- date helpers ---------------- */
@@ -569,10 +617,142 @@ document.getElementById('jumpToday').onclick=()=>{
   toast('Jumped to today');
 };
 
+/* =======================================================
+   CLOUD SYNC  (Firebase — single account, two-way)
+======================================================= */
+const cloud = { on:false, uid:null, db:null, unsub:null, applyingRemote:false, authMode:'signin' };
+function fbConfigured(){ return firebaseConfig && firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith('PASTE_'); }
+function rerenderAll(){ if(tab==='tasks') refreshTasks(); else renderHabits(); }
+
+function setSync(state){ // synced | syncing | error
+  const b=document.getElementById('acctBtn');
+  b.classList.toggle('syncing', state==='syncing');
+  b.textContent = state==='error' ? '⚠️' : state==='syncing' ? '🔄' : '☁️';
+  b.title = state==='error' ? 'Sync error — tap for account' : state==='syncing' ? 'Syncing…' : 'Synced — tap for account';
+}
+
+let pushT;
+function cloudPush(){
+  if(!cloud.uid || cloud.applyingRemote) return;
+  setSync('syncing');
+  clearTimeout(pushT);
+  pushT=setTimeout(()=>{
+    cloud.db.collection('users').doc(cloud.uid).set({
+      tasks, habits, hlog,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(()=>setSync('synced')).catch(err=>{ console.error(err); setSync('error'); });
+  }, 700);
+}
+
+function cloudSubscribe(){
+  cloud.unsub = cloud.db.collection('users').doc(cloud.uid).onSnapshot(snap=>{
+    if(!snap.exists){ cloudPush(); return; }      // first login on a fresh account: seed cloud from local
+    if(snap.metadata.hasPendingWrites) return;    // ignore the echo of our own write
+    const data=snap.data()||{};
+    cloud.applyingRemote=true;
+    tasks  = data.tasks  || {};
+    habits = data.habits || [];
+    hlog   = data.hlog   || {};
+    DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog);
+    cloud.applyingRemote=false;
+    rerenderAll();
+    setSync('synced');
+  }, err=>{ console.error(err); setSync('error'); });
+}
+
+function onAuth(user){
+  const overlay=document.getElementById('authOverlay');
+  const acct=document.getElementById('acctBtn');
+  if(cloud.unsub){ cloud.unsub(); cloud.unsub=null; }
+  if(user){
+    cloud.uid=user.uid;
+    overlay.classList.add('hidden');
+    acct.classList.remove('hidden');
+    setSync('synced');
+    cloudSubscribe();
+  } else {
+    cloud.uid=null;
+    overlay.classList.remove('hidden');
+    acct.classList.add('hidden');
+  }
+}
+
+function authError(e){
+  const map={
+    'auth/invalid-email':'That email doesn’t look right.',
+    'auth/invalid-credential':'Wrong email or password.',
+    'auth/wrong-password':'Wrong password.',
+    'auth/user-not-found':'No account with that email — tap “Create your account”.',
+    'auth/email-already-in-use':'That email already has an account — switch to Sign in.',
+    'auth/weak-password':'Password must be at least 6 characters.',
+    'auth/network-request-failed':'No connection. Check your internet.',
+    'auth/too-many-requests':'Too many attempts. Try again in a bit.'
+  };
+  return map[e.code] || e.message || 'Something went wrong.';
+}
+
+function wireAuthUI(){
+  const form=document.getElementById('authForm');
+  const errEl=document.getElementById('authErr');
+  const btn=document.getElementById('authBtn');
+  const msg=document.getElementById('authMsg');
+  const toggle=document.getElementById('authToggle');
+
+  toggle.onclick=()=>{
+    cloud.authMode = cloud.authMode==='signin' ? 'signup' : 'signin';
+    const signup = cloud.authMode==='signup';
+    btn.textContent = signup ? 'Create account' : 'Sign in';
+    msg.textContent = signup ? 'Create the one account you’ll use on every device.' : 'Sign in to sync your habits & tasks across your devices.';
+    toggle.textContent = signup ? 'Already have an account? Sign in' : 'First time? Create your account';
+    document.getElementById('authPass').setAttribute('autocomplete', signup?'new-password':'current-password');
+    errEl.textContent='';
+  };
+
+  form.onsubmit=e=>{
+    e.preventDefault();
+    const email=document.getElementById('authEmail').value.trim();
+    const pass=document.getElementById('authPass').value;
+    errEl.textContent=''; btn.disabled=true; const label=btn.textContent; btn.textContent='…';
+    const auth=firebase.auth();
+    const p = cloud.authMode==='signup'
+      ? auth.createUserWithEmailAndPassword(email,pass)
+      : auth.signInWithEmailAndPassword(email,pass);
+    p.catch(err=>{ errEl.textContent=authError(err); })
+     .finally(()=>{ btn.disabled=false; btn.textContent=label; });
+  };
+
+  document.getElementById('authSkip').onclick=()=>{
+    document.getElementById('authOverlay').classList.add('hidden');
+    toast('Offline mode — changes stay on this device');
+  };
+
+  document.getElementById('acctBtn').onclick=()=>{
+    const email=firebase.auth().currentUser?.email || '';
+    if(confirm(`Signed in as ${email}\n\nSign out on this device? Your data stays safe in the cloud.`)){
+      firebase.auth().signOut();
+    }
+  };
+}
+
+function initCloud(){
+  wireAuthUI();
+  if(!fbConfigured() || typeof firebase==='undefined'){
+    document.getElementById('acctBtn').classList.add('hidden');   // local-only mode
+    return;
+  }
+  firebase.initializeApp(firebaseConfig);
+  cloud.db=firebase.firestore();
+  cloud.on=true;
+  cloud.db.enablePersistence({synchronizeTabs:true}).catch(()=>{});             // offline cache
+  firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{}); // stay signed in
+  firebase.auth().onAuthStateChanged(onAuth);
+}
+
 /* init */
 setTheme(localStorage.getItem('tk_theme')||'dark');
 document.getElementById('todayLabel').textContent = `${DOW[today.getDay()]}, ${MON[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
 renderTaskDow(); setTaskView('month'); setTab('tasks');
+initCloud();
 </script>
 </body>
 </html>
