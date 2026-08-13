@@ -65,8 +65,11 @@
   .btn.ghost{background:var(--panel2); color:var(--text);}
   .btn.warn{background:var(--warn); color:#3b2600;}
   .btn:active{filter:brightness(.92);}
-  input.txt, select.txt{background:var(--panel2); border:1px solid var(--line); color:var(--text); padding:11px 12px; border-radius:12px; font-size:15px; width:100%; outline:none;}
-  input.txt:focus{border-color:var(--accent);}
+  input.txt, select.txt, textarea.txt{background:var(--panel2); border:1px solid var(--line); color:var(--text); padding:11px 12px; border-radius:12px; font-size:15px; width:100%; outline:none; box-sizing:border-box; font-family:inherit;}
+  input.txt:focus, textarea.txt:focus{border-color:var(--accent);}
+  .ttwrap{flex:1; min-width:0; cursor:pointer;}
+  .subdesc{font-size:12px; color:var(--muted); margin-top:2px; line-height:1.35; white-space:pre-wrap; word-break:break-word;}
+  .noteic{font-size:11px; opacity:.7; margin-left:4px;}
 
   /* HABITS */
   .daystrip{display:flex; gap:8px; overflow-x:auto; padding:2px 2px 8px; scroll-snap-type:x proximity;}
@@ -698,9 +701,9 @@ function renderUni(){
     box.querySelector('.cdel').onclick=()=>{ if(confirm(`Delete course "${c.name}"${total?` and its ${total} task${total===1?'':'s'}`:''}?`)){ courses=courses.filter(x=>x.id!==c.id); persistCourses(); renderUni(); } };
     c.items.forEach(it=>{
       const row=document.createElement('div'); row.className='taskline';
-      row.innerHTML=`<div class="tc ${it.done?'on':''}">✓</div><div class="tt ${it.done?'done':''}" title="Tap to rename">${escapeHtml(it.text)}</div><button class="del">✕</button>`;
+      row.innerHTML=`<div class="tc ${it.done?'on':''}">✓</div><div class="ttwrap" title="Tap to edit / add description"><div class="tt ${it.done?'done':''}">${escapeHtml(it.text)}${it.desc?'<span class="noteic">📝</span>':''}</div>${it.desc?`<div class="subdesc">${escapeHtml(it.desc)}</div>`:''}</div><button class="del">✕</button>`;
       row.querySelector('.tc').onclick=()=>{ it.done=!it.done; persistCourses(); renderUni(); };
-      row.querySelector('.tt').onclick=()=>inlineRename(row.querySelector('.tt'),'renameinp',it.text,v=>{ if(v)it.text=v; });
+      row.querySelector('.ttwrap').onclick=()=>openSubtaskModal(c,it);
       row.querySelector('.del').onclick=()=>{ c.items=c.items.filter(x=>x.id!==it.id); persistCourses(); renderUni(); };
       box.appendChild(row);
     });
@@ -714,6 +717,28 @@ function renderUni(){
     wrap.appendChild(box);
   });
   if(m) m.scrollTop=y;   // preserve scroll across the full rebuild
+}
+function openSubtaskModal(c,it){
+  const back=document.createElement('div'); back.className='modalback';
+  back.innerHTML=`<div class="modal">
+    <h3>Edit task</h3>
+    <input class="txt" id="stName" value="${escapeHtml(it.text)}" style="margin-bottom:12px;" />
+    <div class="sub" style="margin-bottom:6px;">Description (optional)</div>
+    <textarea class="txt" id="stDesc" rows="4" placeholder="Notes, links, details…">${escapeHtml(it.desc||'')}</textarea>
+    <div class="row" style="margin-top:14px; gap:8px;">
+      <button class="btn ghost" id="stCancel" style="flex:1;">Cancel</button>
+      <button class="btn" id="stSave" style="flex:1;">Save</button>
+    </div>
+  </div>`;
+  document.body.appendChild(back);
+  back.onclick=e=>{ if(e.target===back)back.remove(); };
+  back.querySelector('#stCancel').onclick=()=>back.remove();
+  back.querySelector('#stSave').onclick=()=>{
+    const nm=back.querySelector('#stName').value.trim(); if(nm)it.text=nm;
+    it.desc=back.querySelector('#stDesc').value.trim();
+    persistCourses(); back.remove(); renderUni();
+  };
+  setTimeout(()=>back.querySelector('#stName').focus(),50);
 }
 
 /* =======================================================
@@ -1358,7 +1383,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.0.4';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.0.5';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
