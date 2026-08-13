@@ -182,7 +182,7 @@
   .modalback{position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:30; display:flex; align-items:flex-end; justify-content:center; animation:fade .2s;}
   .modal{background:var(--panel); width:100%; max-width:520px; border-radius:18px 18px 0 0; padding:16px 16px calc(20px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); max-height:90vh; display:flex; flex-direction:column;}
   .modal>*{flex-shrink:0;}
-  .modal #mList, .modal #trList, .modal #cmpList, .modal #exList{overflow-y:auto; flex-shrink:1; min-height:0;}
+  .modal #mList, .modal #trList, .modal #cmpList, .modal #sBody{overflow-y:auto; flex-shrink:1; min-height:0;}
   .modal h3{margin:2px 0 12px;}
   .msort{display:flex; align-items:center; gap:6px; margin-bottom:10px;}
   .taskline .tm{font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap;}
@@ -1580,7 +1580,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.1.1';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.1.2';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
