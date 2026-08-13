@@ -183,7 +183,8 @@
   .trow .sub{min-width:40px;}
   .taskline .edit{background:none; border:none; color:var(--muted); font-size:14px; cursor:pointer; padding:0 2px;}
   .taskline .tt{cursor:pointer;}
-  .taskline .renameinp{flex:1; font-size:14px; background:var(--panel2); border:1px solid var(--accent); border-radius:6px; padding:4px 6px; color:var(--text); outline:none; min-width:0;}
+  .renameinp{flex:1; font-size:14px; background:var(--panel2); border:1px solid var(--accent); border-radius:6px; padding:4px 6px; color:var(--text); outline:none; min-width:0;}
+  .cname{cursor:pointer;}
   .tdash{color:var(--muted); font-weight:600;}
   .pchips{display:flex; gap:8px; margin:6px 0 2px;}
   .pchip{flex:1; text-align:center; padding:8px; border-radius:10px; border:1px solid var(--line); font-size:12px; font-weight:600; cursor:pointer; color:var(--muted);}
@@ -296,11 +297,21 @@
     </div>
     <div id="habitMonth"></div>
   </section>
+
+  <!-- ===================== UNI ===================== -->
+  <section id="view-uni" class="hidden">
+    <div class="addrow" style="border:none; padding:0 0 12px;">
+      <input id="newCourse" placeholder="New course (e.g. Calculus II)" />
+      <button id="addCourse">＋</button>
+    </div>
+    <div id="courseList"></div>
+  </section>
 </main>
 
 <nav class="tabs">
   <button data-tab="tasks" class="active"><span class="ic">🗓️</span>Tasks</button>
   <button data-tab="habits"><span class="ic">🔥</span>Habits</button>
+  <button data-tab="uni"><span class="ic">🎓</span>Uni</button>
 </nav>
 
 <div id="toast" class="toast"></div>
@@ -377,7 +388,9 @@ let tasks  = DB.load('tk_tasks', {});   // { 'YYYY-MM-DD': [ {id,text,done,prio}
 let habits = DB.load('tk_habits', []);  // [ {id,name,goal} ]  goal = times/week (0 = daily/none)
 let hlog   = DB.load('tk_hlog', {});    // { habitId: { 'YYYY-MM-DD': true } }
 let trash  = DB.load('tk_trash', []);   // [ {d:'YYYY-MM-DD', at:ts, t:{...task}} ] — deleted tasks, restorable
-const persist = () => { DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog); DB.save('tk_trash',trash); cloudPush(); gPushSchedule(); };
+let courses = DB.load('tk_courses', []);   // [ {id, name, items:[{id,text,done}]} ] — uni courses & their subtasks
+const persist = () => { DB.save('tk_tasks',tasks); DB.save('tk_habits',habits); DB.save('tk_hlog',hlog); DB.save('tk_trash',trash); DB.save('tk_courses',courses); cloudPush(); gPushSchedule(); };
+function persistCourses(){ DB.save('tk_courses',courses); cloudPush(); }   // courses don't touch Google, so skip gPushSchedule
 const uid = () => Math.random().toString(36).slice(2,9);
 
 /* ---------------- date helpers ---------------- */
@@ -666,6 +679,43 @@ function renderWeek(){
 }
 function refreshTasks(){ renderOverdueBanner(); if(taskView==='month') renderMonthGrid(); else renderWeek(); }
 
+/* ---- Uni: courses (like week-planner days) each holding subtasks ---- */
+function addCourse(){ const inp=document.getElementById('newCourse'); const v=inp.value.trim(); if(!v)return; courses.push({id:uid(),name:v,items:[]}); inp.value=''; persistCourses(); renderUni(); }
+function inlineRename(el,cls,cur,commit){ const inp=document.createElement('input'); inp.className=cls; inp.value=cur; el.replaceWith(inp); inp.focus(); inp.select();
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter') inp.blur(); else if(e.key==='Escape'){ inp.dataset.cancel='1'; inp.blur(); } });
+  inp.addEventListener('blur',()=>{ if(inp.dataset.cancel){ renderUni(); return; } const v=inp.value.trim(); commit(v); persistCourses(); renderUni(); });
+}
+function renderUni(){
+  const m=document.querySelector('main'); const y=m?m.scrollTop:0;
+  const wrap=document.getElementById('courseList'); wrap.innerHTML='';
+  if(!courses.length){ wrap.innerHTML='<div class="empty">No courses yet. Add one above 👆</div>'; if(m) m.scrollTop=y; return; }
+  courses.forEach(c=>{
+    c.items=c.items||[];
+    const total=c.items.length, done=c.items.filter(i=>i.done).length;
+    const box=document.createElement('div'); box.className='weekday';
+    box.innerHTML=`<div class="wh"><span class="wd cname" title="Tap to rename">${escapeHtml(c.name)}</span><span class="spacer"></span>${total?`<span class="sub">${done}/${total}</span>`:''}<button class="del cdel" title="Delete course">✕</button></div>`;
+    box.querySelector('.cname').onclick=()=>inlineRename(box.querySelector('.cname'),'renameinp',c.name,v=>{ if(v)c.name=v; });
+    box.querySelector('.cdel').onclick=()=>{ if(confirm(`Delete course "${c.name}"${total?` and its ${total} task${total===1?'':'s'}`:''}?`)){ courses=courses.filter(x=>x.id!==c.id); persistCourses(); renderUni(); } };
+    c.items.forEach(it=>{
+      const row=document.createElement('div'); row.className='taskline';
+      row.innerHTML=`<div class="tc ${it.done?'on':''}">✓</div><div class="tt ${it.done?'done':''}" title="Tap to rename">${escapeHtml(it.text)}</div><button class="del">✕</button>`;
+      row.querySelector('.tc').onclick=()=>{ it.done=!it.done; persistCourses(); renderUni(); };
+      row.querySelector('.tt').onclick=()=>inlineRename(row.querySelector('.tt'),'renameinp',it.text,v=>{ if(v)it.text=v; });
+      row.querySelector('.del').onclick=()=>{ c.items=c.items.filter(x=>x.id!==it.id); persistCourses(); renderUni(); };
+      box.appendChild(row);
+    });
+    const ar=document.createElement('div'); ar.className='addrow';
+    ar.innerHTML=`<input placeholder="Add task…" /><button>＋</button>`;
+    const inp=ar.querySelector('input');
+    const add=()=>{ const v=inp.value.trim(); if(!v)return; c.items.push({id:uid(),text:v,done:false}); inp.value=''; persistCourses(); renderUni(); };
+    ar.querySelector('button').onclick=add;
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter')add();});
+    box.appendChild(ar);
+    wrap.appendChild(box);
+  });
+  if(m) m.scrollTop=y;   // preserve scroll across the full rebuild
+}
+
 /* =======================================================
    HABITS
 ======================================================= */
@@ -811,8 +861,9 @@ function setTab(t){
   tab=t;
   document.getElementById('view-tasks').classList.toggle('hidden',t!=='tasks');
   document.getElementById('view-habits').classList.toggle('hidden',t!=='habits');
+  document.getElementById('view-uni').classList.toggle('hidden',t!=='uni');
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
-  if(t==='tasks') refreshTasks(); else renderHabits();
+  if(t==='tasks') refreshTasks(); else if(t==='uni') renderUni(); else renderHabits();
 }
 function setTaskView(v){
   taskView=v;
@@ -835,6 +886,8 @@ document.getElementById('hPrev').onclick=()=>{ hMonth=new Date(hMonth.getFullYea
 document.getElementById('hNext').onclick=()=>{ hMonth=new Date(hMonth.getFullYear(),hMonth.getMonth()+1,1); hSelected=key(new Date(hMonth.getFullYear(),hMonth.getMonth(),1)); renderHabits(); };
 document.getElementById('addHabit').onclick=addHabit;
 document.getElementById('newHabit').addEventListener('keydown',e=>{if(e.key==='Enter')addHabit();});
+document.getElementById('addCourse').onclick=addCourse;
+document.getElementById('newCourse').addEventListener('keydown',e=>{if(e.key==='Enter')addCourse();});
 document.querySelectorAll('#htypeSeg .pillbtn').forEach(b=>b.onclick=()=>{ newHabitType=b.dataset.htype; document.querySelectorAll('#htypeSeg .pillbtn').forEach(x=>x.classList.toggle('active',x===b)); });
 document.getElementById('themeBtn').onclick=()=>setTheme(document.documentElement.getAttribute('data-theme')==='light'?'dark':'light');
 document.getElementById('jumpToday').onclick=()=>{
@@ -848,7 +901,7 @@ document.getElementById('jumpToday').onclick=()=>{
 ======================================================= */
 const cloud = { on:false, uid:null, db:null, unsub:null, applyingRemote:false, authMode:'signin' };
 function fbConfigured(){ return firebaseConfig && firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith('PASTE_'); }
-function rerenderAll(){ if(tab==='tasks') refreshTasks(); else renderHabits(); }
+function rerenderAll(){ if(tab==='tasks') refreshTasks(); else if(tab==='uni') renderUni(); else renderHabits(); }
 
 function setSync(state){ // synced | syncing | error
   const b=document.getElementById('acctBtn');
@@ -864,15 +917,16 @@ function cloudPush(){
   clearTimeout(pushT);
   pushT=setTimeout(()=>{
     cloud.db.collection('users').doc(cloud.uid).set({
-      tasks, habits, hlog, trash,
+      tasks, habits, hlog, trash, courses,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }).then(()=>setSync('synced')).catch(err=>{ console.error(err); setSync('error'); });
   }, 700);
 }
 
-function setLocalData(t,h,l,tr){
+function setLocalData(t,h,l,tr,co){
   cloud.applyingRemote=true;
   trash = tr||[]; DB.save('tk_trash',trash);
+  courses = co||[]; DB.save('tk_courses',courses);
   // A cloud snapshot can echo back a task that was saved just before it received its
   // Google ids (the push runs after the first cloudPush). Replacing tasks wholesale
   // would orphan that link and make the next gPull re-import the task as a duplicate.
@@ -901,7 +955,7 @@ function cloudSubscribe(){
     }
     if(snap.metadata.hasPendingWrites) return;    // ignore the echo of our own write
     const data=snap.data()||{};
-    setLocalData(data.tasks||{}, data.habits||[], data.hlog||{}, data.trash||[]);
+    setLocalData(data.tasks||{}, data.habits||[], data.hlog||{}, data.trash||[], data.courses||[]);
     localStorage.setItem('tk_owner', cloud.uid);
     setSync('synced');
   }, err=>{ console.error(err); setSync('error'); });
@@ -1304,7 +1358,7 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
-const APP_VERSION='v1.0.3';   // bump on every deploy — shown next to the title to confirm a deploy landed
+const APP_VERSION='v1.0.4';   // bump on every deploy — shown next to the title to confirm a deploy landed
 document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
