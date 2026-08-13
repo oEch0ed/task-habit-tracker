@@ -202,12 +202,13 @@
   .hbtn.gon{background:rgba(52,211,153,.4);}
   .hbtn.gon:active{background:rgba(52,211,153,.55);}
   .hbtn.greauth{background:rgba(224,162,79,.55);}
+  h1 .ver{font-size:10px; font-weight:600; color:var(--muted); vertical-align:super; margin-left:4px; letter-spacing:.3px;}
 </style>
 </head>
 <body>
 <header>
   <div>
-    <h1>Track</h1>
+    <h1>Track<span class="ver" id="verLabel"></span></h1>
     <div class="date" id="todayLabel"></div>
   </div>
   <div class="hbtns">
@@ -1275,6 +1276,8 @@ document.getElementById('gBtn').onclick=()=>{
 };
 
 /* init */
+const APP_VERSION='v1.0.0';   // bump on every deploy — shown next to the title to confirm a deploy landed
+document.getElementById('verLabel').textContent=APP_VERSION;
 maybeLock();   // if biometric lock is on, cover the app until Face ID / Touch ID unlocks it
 setTheme(localStorage.getItem('tk_theme')||'dark');
 document.getElementById('todayLabel').textContent = `${DOW[today.getDay()]}, ${MON[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
