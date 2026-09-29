@@ -550,7 +550,8 @@ function makeQuestion(L){
       const answer = String(s);
       return {
         itemKey:`int:${s}:${d}`, seq,
-        sep: ()=>playSeq(seqMelodic(notes, .95, 1.3)),
+        sep:  ()=>playSeq(seqMelodic(notes, .95, 1.3)),   // one at a time, in the question's direction
+        both: ()=>playSeq(seqHarmonic(notes)),            // stacked — easier to judge consonance
         prompt: d==='harm' ? 'Both notes together — what interval?' : d==='desc' ? 'Downwards — what interval?' : 'What interval do you hear?',
         play: ()=>playSeq(seq),
         choices: choicesFrom(pool.map(String), answer, 6).map(k=>({k, label:`${INTERVALS[+k].n}`, hint:INTERVALS[+k].s})),
@@ -778,7 +779,8 @@ function renderQuestion(){
       <button class="playbig" id="playBtn" aria-label="Play">▶</button>
       <div class="minibtns">
         <button class="minibtn" id="slowBtn">🐢 Slower</button>
-        ${S.L.type==='interval'?'<button class="minibtn" id="sepBtn">↕ One at a time</button>':''}
+        ${q.sep?'<button class="minibtn" id="sepBtn">↕ One at a time</button>':''}
+        ${q.both?'<button class="minibtn" id="bothBtn">⇊ Both at once</button>':''}
       </div>
     </div>` : `<div style="height:8px"></div>`}
     <div class="choices ${cols}" id="choices">
@@ -790,7 +792,9 @@ function renderQuestion(){
   const sb=body.querySelector('#slowBtn');
   if(sb) sb.onclick=()=>slowPlay(q);
   const sep=body.querySelector('#sepBtn');
-  if(sep) sep.onclick=()=>q.sep ? q.sep() : slowPlay(q);
+  if(sep) sep.onclick=()=>q.sep();
+  const both=body.querySelector('#bothBtn');
+  if(both) both.onclick=()=>q.both();
   body.querySelectorAll('.choice').forEach(b=> b.onclick=()=>answer(b.dataset.k, b));
 }
 /* Stretch a sequence in time (and let notes ring longer) for the 🐢 button. */
